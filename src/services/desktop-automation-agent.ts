@@ -275,7 +275,13 @@ export class DesktopAutomationAgent {
       if (signal?.aborted) { console.log(`[Agent] ■ signal.aborted at turn=${turn}`); break; }
       console.log(`[Agent]   ── Turn ${turn + 1}/${maxTurns} ──`);
 
-      // 注入任务进度上下文，让 LLM 知道已完成哪些子目标
+      // 清理旧进度消息 → 注入最新进度上下文（旧消息内容滞后，会误导 LLM）
+      for (let i = ctx.messages.length - 1; i >= 0; i--) {
+        const m = ctx.messages[i];
+        if (m.role === 'user' && typeof m.content === 'string' && m.content.startsWith('📋 Task progress')) {
+          ctx.messages.splice(i, 1);
+        }
+      }
       const progCtx = progress.buildContext();
       if (progCtx) {
         ctx.messages.push({ role: 'user', content: progCtx });
