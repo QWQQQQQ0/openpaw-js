@@ -1,6 +1,8 @@
 // 来源: lib/services/web_screen_service_web.dart
 // Iframe backend for communicating with generated apps
 
+import type { IWebScreenService } from '@/interfaces/web-screen-service';
+
 interface PendingCall {
   resolve: (value: Record<string, unknown>) => void;
   timer: ReturnType<typeof setTimeout>;
@@ -12,7 +14,7 @@ interface ActionPayload {
   [key: string]: unknown;
 }
 
-class WebScreenService {
+class WebScreenService implements IWebScreenService {
   private _iframe: HTMLIFrameElement | null = null;
   private _cid = 0;
   private _pending = new Map<string, PendingCall>();

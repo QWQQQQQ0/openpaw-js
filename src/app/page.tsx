@@ -332,8 +332,8 @@ export default function ChatPage() {
       <div ref={scrollRef} className="flex-1 overflow-y-auto">
         {hasMessages ? (
           <div className="py-2">
-            {messages.map((msg) => (
-              <ChatBubble key={msg.id} message={msg} />
+            {messages.map((msg, i) => (
+              <ChatBubble key={msg.id} message={msg} previousMessage={i > 0 ? messages[i - 1] : undefined} />
             ))}
           </div>
         ) : (

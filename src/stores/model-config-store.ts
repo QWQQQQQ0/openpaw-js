@@ -22,6 +22,8 @@ interface ModelConfigState {
     apiKey: string;
     isDefault?: boolean;
     supportsTools?: boolean;
+    thinkingMode?: boolean;
+    supportsMultimodal?: boolean;
     password: string;
   }) => Promise<void>;
   remove: (id: string) => Promise<void>;
@@ -40,6 +42,8 @@ function rowToConfig(row: ModelProviderRow): ProviderConfig {
     encryptedApiKey: row.encrypted_api_key,
     isDefault: row.is_default === 1,
     supportsTools: row.supports_tools !== 0,
+    thinkingMode: row.thinking_mode === 1,
+    supportsMultimodal: row.supports_multimodal !== 0,
     createdAt: row.created_at,
   };
 }
@@ -63,7 +67,7 @@ export const useModelConfigStore = create<ModelConfigState>()(
       }
     },
 
-    save: async ({ id, name, type, baseUrl, model, apiKey, isDefault, supportsTools, password }) => {
+    save: async ({ id, name, type, baseUrl, model, apiKey, isDefault, supportsTools, thinkingMode, supportsMultimodal, password }) => {
       const db = await getDB();
       // When editing with empty apiKey, keep existing encrypted key
       let encryptedApiKey: string;
@@ -78,20 +82,23 @@ export const useModelConfigStore = create<ModelConfigState>()(
       const providerId = id ?? crypto.randomUUID();
       const createdAt = new Date().toISOString();
       const supportsToolsVal = (supportsTools ?? true) ? 1 : 0;
+      const thinkingModeVal = (thinkingMode ?? false) ? 1 : 0;
+      const supportsMultimodalVal = (supportsMultimodal ?? true) ? 1 : 0;
 
       if (isDefault) {
         await db.execute('UPDATE modelProviders SET is_default = 0');
       }
 
       await db.execute(
-        `INSERT INTO modelProviders (id, name, provider_type, base_url, model, encrypted_api_key, is_default, supports_tools, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `INSERT INTO modelProviders (id, name, provider_type, base_url, model, encrypted_api_key, is_default, supports_tools, thinking_mode, supports_multimodal, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(id) DO UPDATE SET
            name=excluded.name, provider_type=excluded.provider_type,
            base_url=excluded.base_url, model=excluded.model,
            encrypted_api_key=excluded.encrypted_api_key, is_default=excluded.is_default,
-           supports_tools=excluded.supports_tools`,
-        [providerId, name, type, baseUrl, model, encryptedApiKey, isDefault ? 1 : 0, supportsToolsVal, createdAt]
+           supports_tools=excluded.supports_tools, thinking_mode=excluded.thinking_mode,
+           supports_multimodal=excluded.supports_multimodal`,
+        [providerId, name, type, baseUrl, model, encryptedApiKey, isDefault ? 1 : 0, supportsToolsVal, thinkingModeVal, supportsMultimodalVal, createdAt]
       );
       await get().load();
     },

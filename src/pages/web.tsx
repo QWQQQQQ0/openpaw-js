@@ -6,9 +6,10 @@ import {
 } from 'lucide-react';
 import { useT } from '@/i18n/strings';
 import { extensionBridge, type TabInfo } from '@/services/extension-bridge';
-import { WebScreenSkill } from '@/skills/web';
+import { getBuiltinSkill } from '@/skills/builtin-executor';
+import type { WebScreenSkill } from '@/skills/web';
 import { WebAutomationAgent, type AgentTurn } from '@/services/web-automation-agent';
-import { ModelCallService } from '@/adapters/model-call-service';
+import { getModelService } from '@/services/model-service-singleton';
 import { useModelConfigStore } from '@/stores/model-config-store';
 import type { ProviderConfig } from '@/types/provider';
 
@@ -229,8 +230,9 @@ export default function WebPage() {
       setStepCount(0);
       setError(null);
 
-      const skill = new WebScreenSkill();
-      const agent = new WebAutomationAgent(new ModelCallService(), skill);
+      const skill = getBuiltinSkill('web_screen') as WebScreenSkill;
+      const { getCacheService } = await import('@/services/cache-service-singleton');
+      const agent = new WebAutomationAgent(getModelService(), skill, getCacheService());
 
       await extensionBridge.showFloatingPanel();
 

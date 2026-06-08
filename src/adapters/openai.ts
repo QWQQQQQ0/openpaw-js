@@ -8,12 +8,13 @@ export class OpenAIAdapter implements LLMAdapter {
   readonly displayName = 'OpenAI / 兼容接口';
   readonly defaultBaseUrl = 'https://api.openai.com/v1';
 
-  async *chat({ messages, model, apiKey, baseUrl, tools }: {
+  async *chat({ messages, model, apiKey, baseUrl, tools, thinkingMode }: {
     messages: LLMMessage[];
     model: string;
     apiKey: string;
     baseUrl?: string;
     tools?: Record<string, unknown>[];
+    thinkingMode?: boolean;
   }): AsyncGenerator<string> {
     const url = `${baseUrl ?? this.defaultBaseUrl}/chat/completions`;
 
@@ -29,7 +30,6 @@ export class OpenAIAdapter implements LLMAdapter {
         if (m.toolCallName != null) msg['name'] = m.toolCallName;
         return msg;
       }
-      console.log(m);
       return toJson(m);
     });
 
@@ -43,11 +43,12 @@ export class OpenAIAdapter implements LLMAdapter {
       body['tools'] = tools;
     }
 
-    const bodyJson = JSON.stringify(body);
-    console.debug('[openai] POST', url, 'model=', model, 'msgs=', messages.length, 'tools=', tools?.length ?? 0);
+    // MiMo thinking models: enable thinking mode
+    if (thinkingMode) {
+      body['thinking'] = { type: 'enabled' };
+    }
 
-    // [TEMP TRACE] log complete request structure
-    debugLogRequest(body, bodyMessages, model);
+    const bodyJson = JSON.stringify(body);
 
     const response = await fetch(url, {
       method: 'POST',
@@ -83,6 +84,12 @@ export class OpenAIAdapter implements LLMAdapter {
 
         const delta = choices[0]['delta'] as Record<string, unknown> | undefined;
         if (!delta) continue;
+
+        // 0. Reasoning content (MiMo thinking models) — 实时流式输出，不缓冲
+        const rc = delta['reasoning_content'] as string | undefined;
+        if (rc && rc.length > 0) {
+          yield `__REASONING__:${rc}`;
+        }
 
         // 1. Text content
         const content = delta['content'] as string | undefined;
@@ -122,12 +129,13 @@ export class OpenAIAdapter implements LLMAdapter {
       }
     }
 
-    // Emit tool calls if any were accumulated (native function calling)
+    // Emit tool calls (critical — must not be preceded by other markers)
     if (toolCalls.size > 0) {
       const calls = Array.from(toolCalls.values());
       yield `__TOOLS__:${JSON.stringify(calls)}`;
-      return;
     }
+
+    if (toolCalls.size > 0) return;
 
     // Fallback: extract text-based <tool_call> blocks from response text
     const extracted = extractTextToolCalls(fullText);
@@ -145,6 +153,10 @@ function toJson(m: LLMMessage): Record<string, unknown> {
   if (m.toolCallId != null) json['tool_call_id'] = m.toolCallId;
   if (m.toolCallName != null) json['name'] = m.toolCallName;
   if (m.toolCalls != null) json['tool_calls'] = m.toolCalls;
+  // MiMo 等思考模型：多轮工具调用场景必须回传 reasoning_content
+  if (m.reasoning_content != null && m.reasoning_content.length > 0) {
+    json['reasoning_content'] = m.reasoning_content;
+  }
   return json;
 }
 
@@ -167,110 +179,6 @@ async function* decodeStreamToLines(body: ReadableStream<Uint8Array>): AsyncGene
       break;
     }
   }
-}
-
-// [TEMP TRACE] Log complete request body structure for debugging.
-function debugLogRequest(
-  body: Record<string, unknown>,
-  bodyMessages: Array<Record<string, unknown>>,
-  model: string,
-) {
-  try {
-    const parts: string[] = [];
-    parts.push('=== OPENAI REQUEST STRUCTURE ===');
-    parts.push(`model: ${model}`);
-    parts.push(`stream: ${body['stream']}`);
-    parts.push(`tools: ${body['tools'] != null ? (body['tools'] as Array<unknown>).length : 0}`);
-    parts.push(`messages count: ${bodyMessages.length}`);
-    parts.push('');
-
-    for (let i = 0; i < bodyMessages.length; i++) {
-      const msg = bodyMessages[i];
-      parts.push(`── msg[${i}] ──`);
-      parts.push(`  role: ${msg['role']}`);
-      if (msg['tool_call_id'] != null) parts.push(`  tool_call_id: ${msg['tool_call_id']}`);
-      if (msg['name'] != null) parts.push(`  name: ${msg['name']}`);
-      if (msg['tool_calls'] != null) {
-        const tcs = msg['tool_calls'] as Array<Record<string, unknown>>;
-        parts.push(`  tool_calls: ${tcs.length} calls`);
-        for (const tc of tcs) {
-          const fn = tc['function'] as Record<string, unknown> | undefined;
-          const args = fn?.['arguments']?.toString() ?? '';
-          parts.push(`    [${tc['id']}] ${fn?.['name']}(${args.length > 100 ? args.substring(0, 100) + '...' : args})`);
-        }
-      }
-      const c = msg['content'];
-      if (typeof c === 'string') {
-        parts.push(`  content (String, len=${c.length}):`);
-        parts.push(`    ${c.length > 500 ? c.substring(0, 500) + '...' : c}`);
-      } else if (Array.isArray(c)) {
-        parts.push(`  content (List, ${c.length} parts):`);
-        for (let k = 0; k < c.length; k++) {
-          const part = c[k] as Record<string, unknown>;
-          const type = part['type']?.toString() ?? '?';
-          if (type === 'image_url') {
-            const iu = part['image_url'] as Record<string, unknown> | undefined;
-            const url = iu?.['url']?.toString() ?? '';
-            const comma = url.indexOf(',');
-            const header = comma >= 0 ? url.substring(0, comma) : url.substring(0, 120);
-            const dataLen = comma >= 0 ? url.length - comma - 1 : url.length;
-            parts.push(`    part[${k}] type=image_url`);
-            parts.push(`      header: ${header}`);
-            parts.push(`      base64_data_len: ${dataLen}`);
-          } else if (type === 'text') {
-            const t = part['text']?.toString() ?? '';
-            parts.push(`    part[${k}] type=text len=${t.length}`);
-            parts.push(`      text: ${t.length > 300 ? t.substring(0, 300) + '...' : t}`);
-          } else {
-            parts.push(`    part[${k}] type=${type} keys=${Object.keys(part).join(',')}`);
-          }
-        }
-      } else if (c == null) {
-        parts.push('  content: null');
-      } else {
-        parts.push(`  content: type=${typeof c}`);
-      }
-    }
-
-    // Full JSON body with truncated images
-    parts.push('');
-    parts.push('── FULL JSON BODY (images truncated) ──');
-    parts.push(JSON.stringify(truncateBodyForLog(body), null, 2));
-
-    console.debug(parts.join('\n'));
-  } catch (e) {
-    console.debug('[openai] ERROR in debugLogRequest:', e);
-  }
-}
-
-function truncateBodyForLog(body: Record<string, unknown>): Record<string, unknown> {
-  const copy: Record<string, unknown> = {};
-  for (const [key, value] of Object.entries(body)) {
-    if (key === 'messages' && Array.isArray(value)) {
-      copy[key] = value.map((m: Record<string, unknown>) => {
-        const mc = { ...m };
-        const c = mc['content'];
-        if (Array.isArray(c)) {
-          mc['content'] = c.map((part: Record<string, unknown>) => {
-            if (part['type'] === 'image_url') {
-              const iu = { ...(part['image_url'] as Record<string, unknown>) };
-              const url = iu['url']?.toString() ?? '';
-              const comma = url.indexOf(',');
-              if (comma >= 0) {
-                iu['url'] = `${url.substring(0, comma)},[BASE64_DATA:${url.length - comma - 1} chars]`;
-              }
-              return { type: 'image_url', image_url: iu };
-            }
-            return part;
-          });
-        }
-        return mc;
-      });
-    } else {
-      copy[key] = value;
-    }
-  }
-  return copy;
 }
 
 // Parse tool calls from model text output.

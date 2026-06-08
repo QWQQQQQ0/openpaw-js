@@ -10,12 +10,14 @@ interface ToolModeBarProps {
   mode: ToolMode;
   selectedCount: number;
   onModeChanged: (mode: ToolMode) => void;
+  onFavoritesDoubleClick?: () => void;
 }
 
-function ModeChip({ label, selected, onClick }: { label: string; selected: boolean; onClick: () => void }) {
+function ModeChip({ label, selected, onClick, onDoubleClick }: { label: string; selected: boolean; onClick: () => void; onDoubleClick?: () => void }) {
   return (
     <button
       onClick={onClick}
+      onDoubleClick={onDoubleClick}
       className={`px-2.5 py-1 rounded-full text-[12px] font-medium transition-colors ${
         selected
           ? 'bg-blue-100 dark:bg-blue-900 text-blue-700 dark:text-blue-300'
@@ -27,7 +29,7 @@ function ModeChip({ label, selected, onClick }: { label: string; selected: boole
   );
 }
 
-export function ToolModeBar({ mode, selectedCount, onModeChanged }: ToolModeBarProps) {
+export function ToolModeBar({ mode, selectedCount, onModeChanged, onFavoritesDoubleClick }: ToolModeBarProps) {
   const t = useT();
 
   return (
@@ -48,6 +50,7 @@ export function ToolModeBar({ mode, selectedCount, onModeChanged }: ToolModeBarP
           label={t('toolmode.favorites')}
           selected={mode === ToolMode.favorites}
           onClick={() => onModeChanged(ToolMode.favorites)}
+          onDoubleClick={onFavoritesDoubleClick}
         />
         <ModeChip
           label={

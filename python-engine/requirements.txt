@@ -1,0 +1,7 @@
+pywinauto>=0.6.8
+playwright>=1.48
+mss>=9.0
+Pillow>=10.0
+paddleocr>=2.8
+pynput>=1.7
+# Note: no need to run `playwright install` — uses system Edge/Chrome by default

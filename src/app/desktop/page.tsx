@@ -83,8 +83,8 @@ export default function DesktopPage() {
           visible: false,
         });
 
-        win.once('tauri://error', (e) => {
-          console.error('[Desktop] float window creation error:', e);
+        win.once('tauri://error', () => {
+          // ignore
         });
 
         await new Promise<void>((resolve) => {

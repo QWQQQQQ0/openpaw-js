@@ -1,7 +1,6 @@
 import { createBrowserRouter } from 'react-router-dom';
 import { lazy, Suspense } from 'react';
 import { AppShell } from '@/components/app-shell';
-import { AppInitWrapper } from '@/components/app-init-wrapper';
 import { PageSkeleton } from '@/components/page-skeleton';
 
 const ChatPage = lazy(() => import('@/pages/chat'));
@@ -13,6 +12,8 @@ const ModelsPage = lazy(() => import('@/pages/models'));
 const SkillsPage = lazy(() => import('@/pages/skills'));
 const SettingsPage = lazy(() => import('@/pages/settings'));
 const AppsPage = lazy(() => import('@/pages/apps'));
+const WatchersPage = lazy(() => import('@/pages/watchers'));
+const KnowledgePage = lazy(() => import('@/pages/knowledge'));
 
 function Lazy({ children }: { children: React.ReactNode }) {
   return <Suspense fallback={<PageSkeleton />}>{children}</Suspense>;
@@ -36,7 +37,6 @@ export const router = createBrowserRouter([
         path: '/',
         element: (
           <Lazy>
-            <AppInitWrapper />
             <ChatPage />
           </Lazy>
         ),
@@ -94,6 +94,22 @@ export const router = createBrowserRouter([
         element: (
           <Lazy>
             <AppsPage />
+          </Lazy>
+        ),
+      },
+      {
+        path: '/watchers',
+        element: (
+          <Lazy>
+            <WatchersPage />
+          </Lazy>
+        ),
+      },
+      {
+        path: '/knowledge',
+        element: (
+          <Lazy>
+            <KnowledgePage />
           </Lazy>
         ),
       },

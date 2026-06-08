@@ -15,5 +15,7 @@ export interface LLMAdapter {
     apiKey: string;
     baseUrl?: string;
     tools?: Record<string, unknown>[];
+    /** MiMo 等思考模型：开启 thinking 模式 */
+    thinkingMode?: boolean;
   }): AsyncGenerator<string>;
 }

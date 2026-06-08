@@ -1,5 +1,7 @@
 // 来源: lib/i18n/strings.dart
 
+import { useSettingsStore } from '@/stores/settings-store';
+
 const translations: Record<string, Record<string, string>> = {
   'app.title': { en: 'OpenPaw', zh: 'OpenPaw' },
 
@@ -9,6 +11,8 @@ const translations: Record<string, Record<string, string>> = {
   'nav.apps': { en: 'Apps', zh: '应用' },
   'nav.desktop': { en: 'Desktop', zh: '桌面' },
   'nav.settings': { en: 'Settings', zh: '设置' },
+  'nav.watchers': { en: 'Watchers', zh: '监控' },
+  'nav.knowledge': { en: 'Knowledge', zh: '知识库' },
 
   'chat.title.new': { en: 'New Chat', zh: '新对话' },
   'chat.input.hint': { en: 'Send a message...', zh: '发送消息...' },
@@ -35,6 +39,7 @@ const translations: Record<string, Record<string, string>> = {
   'modellist.setdefault': { en: 'Set as Default', zh: '设为默认' },
   'modellist.delete': { en: 'Delete', zh: '删除' },
   'modellist.default': { en: 'Default', zh: '默认' },
+  'modellist.multimodal': { en: 'Vision', zh: '多模态' },
 
   'settings.title': { en: 'Settings', zh: '设置' },
   'settings.theme': { en: 'Theme', zh: '主题' },
@@ -42,6 +47,35 @@ const translations: Record<string, Record<string, string>> = {
   'settings.theme.light': { en: 'Light', zh: '浅色' },
   'settings.theme.dark': { en: 'Dark', zh: '深色' },
   'settings.language': { en: 'Language', zh: '语言' },
+
+  'skills.title': { en: 'Skills', zh: '技能' },
+  'skills.empty': { en: 'No skills yet', zh: '暂无技能' },
+  'skills.empty.subtitle': { en: 'Create or import a skill to get started.', zh: '创建或导入技能以开始使用。' },
+  'skills.builtin': { en: 'Built-in', zh: '内置' },
+  'skills.description': { en: 'Description', zh: '描述' },
+  'skills.usage': { en: 'Usage Guide', zh: '使用指南' },
+  'skills.tools': { en: 'Tools', zh: '工具' },
+  'skills.noTools': { en: 'No tools exposed.', zh: '暂无暴露的工具。' },
+  'skills.parameters': { en: 'Parameters', zh: '参数' },
+  'skills.noParams': { en: 'No parameters', zh: '无参数' },
+  'skills.test': { en: 'Test', zh: '测试' },
+  'skills.execute': { en: 'Execute', zh: '执行' },
+  'skills.close': { en: 'Close', zh: '关闭' },
+  'skills.cancel': { en: 'Cancel', zh: '取消' },
+  'skills.success': { en: 'Success', zh: '成功' },
+  'skills.failed': { en: 'Failed', zh: '失败' },
+  'skills.expose': { en: 'Expose to AI', zh: '暴露给 AI' },
+  'skills.exposeOn': { en: 'Visible to AI for function calling.', zh: 'AI 可通过函数调用使用此工具。' },
+  'skills.exposeOff': { en: 'Hidden from AI.', zh: '对 AI 隐藏。' },
+  'skills.import': { en: 'Import', zh: '导入' },
+  'skills.generate': { en: 'Generate', zh: 'AI 生成' },
+  'skills.new': { en: 'New', zh: '新建' },
+  'skills.createFirst': { en: 'Create First Skill', zh: '创建第一个技能' },
+  'skills.selectHint': { en: 'Select a skill to view details', zh: '选择一个技能以查看详情' },
+  'skills.id': { en: 'ID', zh: '标识' },
+  'skills.missingParams': { en: 'Missing required parameters: {params}', zh: '缺少必填参数：{params}' },
+  'skills.deleteTitle': { en: 'Delete "{name}"?', zh: '删除 "{name}"？' },
+  'skills.deleteConfirm': { en: 'This cannot be undone.', zh: '此操作不可撤销。' },
 
   'toolmode.all': { en: 'All Tools', zh: '全部工具' },
   'toolmode.all.subtitle': { en: 'All enabled tools sent to AI', zh: '所有启用的工具发送给 AI' },
@@ -51,6 +85,8 @@ const translations: Record<string, Record<string, string>> = {
   'toolmode.favorites.subtitle': { en: 'Only favorite tools sent to AI', zh: '仅常用工具发送给 AI' },
   'toolmode.custom': { en: 'Custom...', zh: '自定义...' },
   'toolmode.custom.subtitle': { en: 'Choose which tools to send', zh: '选择要携带的工具' },
+  'toolmode.selectAll': { en: 'All', zh: '全选' },
+  'toolmode.clearAll': { en: 'Clear', zh: '清空' },
 
   'time.justnow': { en: 'Just now', zh: '刚刚' },
   'time.minutesAgo': { en: '{m}m ago', zh: '{m}分钟前' },
@@ -58,6 +94,7 @@ const translations: Record<string, Record<string, string>> = {
   'time.daysAgo': { en: '{d}d ago', zh: '{d}天前' },
 
   'common.cancel': { en: 'Cancel', zh: '取消' },
+  'common.confirm': { en: 'Confirm', zh: '确认' },
   'common.delete': { en: 'Delete', zh: '删除' },
   'common.dismiss': { en: 'Dismiss', zh: '关闭' },
   'common.error': { en: 'Error', zh: '错误' },
@@ -76,10 +113,14 @@ export function getLocale(): Locale {
 }
 
 export function useT() {
+  // Subscribe to store locale so components re-render on language switch
+  const storeLocale = useSettingsStore((s) => s.locale);
+  const locale = (storeLocale === 'zh' || storeLocale === 'en') ? storeLocale : currentLocale;
+
   function t(key: string, params?: Record<string, string>): string {
     const entry = translations[key];
     if (!entry) return key;
-    let text = entry[currentLocale] ?? entry['en'] ?? key;
+    let text = entry[locale] ?? entry['en'] ?? key;
     if (params) {
       for (const [k, v] of Object.entries(params)) {
         text = text.replaceAll(`{${k}}`, v);

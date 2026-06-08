@@ -33,6 +33,8 @@ export function ModelConfigForm({ existing }: { existing?: ProviderConfig }) {
   const [apiKey, setApiKey] = useState('');
   const [isDefault, setIsDefault] = useState(existing?.isDefault ?? false);
   const [supportsTools, setSupportsTools] = useState(existing?.supportsTools ?? true);
+  const [thinkingMode, setThinkingMode] = useState(existing?.thinkingMode ?? false);
+  const [supportsMultimodal, setSupportsMultimodal] = useState(existing?.supportsMultimodal ?? true);
   const [isTesting, setIsTesting] = useState(false);
   const [testResult, setTestResult] = useState<{ success: boolean; message: string } | null>(null);
   const [saving, setSaving] = useState(false);
@@ -71,30 +73,86 @@ export function ModelConfigForm({ existing }: { existing?: ProviderConfig }) {
     setTestResult(null);
 
     try {
-      const url = `${baseUrl.replace(/\/$/, '')}/chat/completions`;
-      const res = await fetch(url, {
-        method: 'POST',
-        headers: {
+      let url: string;
+      let headers: Record<string, string>;
+      let body: string;
+
+      const base = baseUrl.replace(/\/$/, '');
+
+      if (type === 'anthropic') {
+        // Anthropic: POST /v1/messages, x-api-key header
+        url = `${base}/v1/messages`;
+        headers = {
+          'x-api-key': key,
+          'anthropic-version': '2023-06-01',
+          'Content-Type': 'application/json',
+        };
+        body = JSON.stringify({
+          model,
+          messages: [{ role: 'user', content: 'hi' }],
+          max_tokens: 10,
+        });
+      } else if (type === 'google') {
+        // Google Gemini: POST /v1beta/models/{model}:streamGenerateContent?key=...
+        url = `${base}/v1beta/models/${model}:streamGenerateContent?key=${key}`;
+        headers = { 'Content-Type': 'application/json' };
+        body = JSON.stringify({
+          contents: [{ role: 'user', parts: [{ text: 'hi' }] }],
+        });
+      } else {
+        // OpenAI: POST /chat/completions, Authorization: Bearer
+        url = `${base}/chat/completions`;
+        headers = {
           'Authorization': `Bearer ${key}`,
           'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
+        };
+        body = JSON.stringify({
           model,
           messages: [{ role: 'user', content: 'hi' }],
           max_tokens: 10,
           stream: false,
-        }),
+        });
+      }
+
+      const res = await fetch(url, {
+        method: 'POST',
+        headers,
+        body,
         signal: AbortSignal.timeout(15000),
       });
 
       const data = await res.json();
-      if (data.choices) {
-        setTestResult({ success: true, message: `连通成功 ✓\n模型: ${model}\n端点: ${baseUrl}` });
-      } else if (data.error) {
-        const msg = typeof data.error === 'object' ? (data.error.message ?? JSON.stringify(data.error)) : String(data.error);
-        setTestResult({ success: false, message: `API 错误: ${msg}` });
+
+      if (type === 'anthropic') {
+        if (data.content || data.type === 'message') {
+          setTestResult({ success: true, message: `连通成功 ✓\n模型: ${model}\n端点: ${baseUrl}` });
+        } else if (data.error) {
+          const msg = typeof data.error === 'object' ? (data.error.message ?? JSON.stringify(data.error)) : String(data.error);
+          setTestResult({ success: false, message: `API 错误: ${msg}` });
+        } else {
+          setTestResult({ success: false, message: `未知响应格式: ${JSON.stringify(data)}` });
+        }
+      } else if (type === 'google') {
+        if (data.candidates || data.error) {
+          if (data.error) {
+            const msg = typeof data.error === 'object' ? (data.error.message ?? JSON.stringify(data.error)) : String(data.error);
+            setTestResult({ success: false, message: `API 错误: ${msg}` });
+          } else {
+            setTestResult({ success: true, message: `连通成功 ✓\n模型: ${model}\n端点: ${baseUrl}` });
+          }
+        } else {
+          setTestResult({ success: false, message: `未知响应格式: ${JSON.stringify(data)}` });
+        }
       } else {
-        setTestResult({ success: false, message: `未知响应格式: ${JSON.stringify(data)}` });
+        // OpenAI
+        if (data.choices) {
+          setTestResult({ success: true, message: `连通成功 ✓\n模型: ${model}\n端点: ${baseUrl}` });
+        } else if (data.error) {
+          const msg = typeof data.error === 'object' ? (data.error.message ?? JSON.stringify(data.error)) : String(data.error);
+          setTestResult({ success: false, message: `API 错误: ${msg}` });
+        } else {
+          setTestResult({ success: false, message: `未知响应格式: ${JSON.stringify(data)}` });
+        }
       }
     } catch (e) {
       setTestResult({ success: false, message: `连接失败: ${e}` });
@@ -132,6 +190,8 @@ export function ModelConfigForm({ existing }: { existing?: ProviderConfig }) {
         apiKey: apiKey.trim(),
         isDefault,
         supportsTools,
+        thinkingMode,
+        supportsMultimodal,
         password: '',
       });
       navigate('/models');
@@ -269,6 +329,46 @@ export function ModelConfigForm({ existing }: { existing?: ProviderConfig }) {
             <span
               className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
                 supportsTools ? 'translate-x-6' : 'translate-x-1'
+              }`}
+            />
+          </button>
+        </label>
+
+        {/* Thinking mode */}
+        <label className="flex items-center justify-between py-1">
+          <div>
+            <p className="text-[14px] font-medium text-zinc-700 dark:text-zinc-300">思考模式 (Thinking)</p>
+            <p className="text-[12px] text-zinc-400 dark:text-zinc-500">MiMo 等模型的深度思考能力，开启后返回思考链</p>
+          </div>
+          <button
+            onClick={() => setThinkingMode(!thinkingMode)}
+            className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
+              thinkingMode ? 'bg-blue-600' : 'bg-zinc-200 dark:bg-zinc-700'
+            }`}
+          >
+            <span
+              className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                thinkingMode ? 'translate-x-6' : 'translate-x-1'
+              }`}
+            />
+          </button>
+        </label>
+
+        {/* Supports multimodal */}
+        <label className="flex items-center justify-between py-1">
+          <div>
+            <p className="text-[14px] font-medium text-zinc-700 dark:text-zinc-300">支持多模态 (Vision)</p>
+            <p className="text-[12px] text-zinc-400 dark:text-zinc-500">模型支持图片+文本输入，用于截图视觉分析。不支持时遇到图片会自动切换</p>
+          </div>
+          <button
+            onClick={() => setSupportsMultimodal(!supportsMultimodal)}
+            className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
+              supportsMultimodal ? 'bg-blue-600' : 'bg-zinc-200 dark:bg-zinc-700'
+            }`}
+          >
+            <span
+              className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                supportsMultimodal ? 'translate-x-6' : 'translate-x-1'
               }`}
             />
           </button>

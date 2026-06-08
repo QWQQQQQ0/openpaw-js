@@ -1,1 +1,0 @@
-function r(e){return{type:"function",function:{name:e.name,description:e.description,parameters:e.parameters}}}function t(e,n,a){return{success:e,message:n,data:a}}const i=(e,n)=>t(!0,e,n),s=(e,n)=>t(!1,e,n);export{i as S,s as a,r as t};

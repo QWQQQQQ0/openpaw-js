@@ -5,7 +5,8 @@ import { immer } from 'zustand/middleware/immer';
 import type { ChatMessage, MessageContent } from '@/types/message';
 import type { ConversationRow } from '@/db';
 import { getDB } from '@/db';
-import { serializeContent, deserializeContent } from '@/utils/content';
+import { serializeContent, deserializeContent, hasImages } from '@/utils/content';
+import { resolveMultimodalProvider } from '@/utils/multimodal-provider';
 import { useModelConfigStore } from './model-config-store';
 import { useSettingsStore } from './settings-store';
 import { setSkillExecutor } from '@/services/chat-service';
@@ -54,6 +55,7 @@ interface ChatState {
   switchConversation: (conv: Conversation) => Promise<void>;
   setToolMode: (mode: ToolMode) => void;
   setCustomTools: (tools: Set<string>) => void;
+  toggleCustomTool: (toolName: string) => void;
   clearError: () => void;
 
   // Actions — streaming
@@ -95,7 +97,7 @@ export const useChatStore = create<ChatState>()(
 
     loadMessages: async (conversationId) => {
       const db = await getDB();
-      const rows = await db.query<{ id: string; conversation_id: string; role: string; content: string; timestamp: string }>(
+      const rows = await db.query<{ id: string; conversation_id: string; role: string; content: string; timestamp: string; reasoning_content: string | null }>(
         'SELECT * FROM messages WHERE conversation_id = ? ORDER BY timestamp ASC',
         [conversationId]
       );
@@ -106,6 +108,7 @@ export const useChatStore = create<ChatState>()(
         content: deserializeContent(r.content),
         timestamp: r.timestamp,
         status: 'done' as const,
+        reasoning_content: r.reasoning_content || undefined,
       }));
       set({ messages });
     },
@@ -131,6 +134,12 @@ export const useChatStore = create<ChatState>()(
 
     setToolMode: (mode) => set({ toolMode: mode }),
     setCustomTools: (tools) => set({ toolMode: ToolMode.custom, customTools: tools }),
+    toggleCustomTool: (toolName) => set((state) => {
+      const next = new Set(state.customTools);
+      if (next.has(toolName)) next.delete(toolName);
+      else next.add(toolName);
+      return { customTools: next };
+    }),
     clearError: () => set({ error: null }),
 
     sendMessage: async (content, password) => {
@@ -146,10 +155,16 @@ export const useChatStore = create<ChatState>()(
         const modelStore = useModelConfigStore.getState();
         const settingsStore = useSettingsStore.getState();
 
-        const provider = modelStore.defaultConfig();
+        let provider = modelStore.defaultConfig();
         if (!provider) {
           set({ error: 'No model configured. Please add a model provider first.', isStreaming: false });
           return;
+        }
+
+        // 多模态自动切换：如果消息包含图片但当前模型不支持多模态，自动切换
+        if (hasImages(content) && provider.supportsMultimodal === false) {
+          const { provider: resolved, switched } = resolveMultimodalProvider(provider, modelStore.providers, content);
+          if (switched) provider = resolved;
         }
 
         const apiKey = await modelStore.getApiKey(provider.id, password);
@@ -185,33 +200,24 @@ export const useChatStore = create<ChatState>()(
         // Load existing messages
         await get().loadMessages(conversationId);
 
-        // Build SkillExecutor and register skills
-        const { SkillExecutor } = await import('@/skills/executor');
-        const executor = new SkillExecutor();
-        executor.disabledTools = settingsStore.disabledTools;
-
-        // Built-in skills (hardcoded native bindings)
-        const [
-          { DesktopScreenSkill },
-          { WebScreenSkill },
-          { PhoneScreenSkill },
-          { AppBuilderSkill },
-        ] = await Promise.all([
-          import('@/skills/desktop'),
-          import('@/skills/web'),
-          import('@/skills/phone'),
-          import('@/skills/app-builder'),
-        ]);
-        executor.register(new DesktopScreenSkill());
-        executor.register(new WebScreenSkill());
-        executor.register(new PhoneScreenSkill());
-        executor.register(new AppBuilderSkill());
-
-        // User-defined skills from DB
+        // Load skills from DB first (DB is the single source of truth)
         const { useSkillStore } = await import('@/stores/skill-store');
         const skillStore = useSkillStore.getState();
         await skillStore.initializeSkills();
+
+        // Build SkillExecutor with DB configs for built-in skills
+        const { initBuiltinExecutor, setCodeToolsModelService } = await import('@/skills/builtin-executor');
+        const dbConfigs = skillStore.allConfigs.filter((c) => c.builtin);
+        const executor = await initBuiltinExecutor(dbConfigs);
+        executor.disabledTools = settingsStore.disabledTools;
+
+        // Configure CodeToolsSkill with ModelService for unified LLM access
+        const { getModelService } = await import('@/services/model-service-singleton');
+        setCodeToolsModelService(getModelService(), provider, apiKey);
+
+        // Register user-defined skills from DB (skip skills not exposed to AI)
         for (const skill of skillStore.getUserSkillInstances()) {
+          if (skill.config.exposedToAI === false) continue;
           skill.setExecutor(executor);
           executor.register(skill);
         }

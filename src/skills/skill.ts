@@ -8,6 +8,8 @@ export interface SkillTool {
   name: string;
   description: string;
   parameters: Record<string, unknown>;
+  nameCn?: string;
+  descriptionCn?: string;
 }
 
 export interface Skill {
@@ -16,6 +18,11 @@ export interface Skill {
   category: string;
   description: string;
   tools: SkillTool[];
+  nameCn?: string;
+  descriptionCn?: string;
+  categoryCn?: string;
+  usage?: string;
+  usageCn?: string;
 
   execute(toolName: string, params: Record<string, unknown>): Promise<SkillResult>;
   onLoad?(): Promise<void>;

@@ -11,13 +11,23 @@ export class AppBuilderSkill implements Skill {
   category: string;
   description: string;
   tools: SkillTool[];
+  nameCn?: string;
+  descriptionCn?: string;
+  categoryCn?: string;
+  usage?: string;
+  usageCn?: string;
 
-  constructor(config?: { id?: string; name?: string; category?: string; description?: string; tools?: ToolDefinition[] }) {
+  constructor(config?: { id?: string; name?: string; category?: string; description?: string; tools?: ToolDefinition[]; nameCn?: string; descriptionCn?: string; categoryCn?: string; usage?: string; usageCn?: string }) {
     this.id = config?.id ?? 'app_builder';
     this.name = config?.name ?? 'App Builder';
     this.category = config?.category ?? 'Application';
     this.description = config?.description ?? 'Save, list, update, and delete generated applications.';
-    this.tools = config?.tools?.map(t => ({ name: t.name, description: t.description, parameters: t.parameters })) ?? [];
+    this.tools = config?.tools?.map(t => ({ name: t.name, description: t.description, parameters: t.parameters, nameCn: t.nameCn, descriptionCn: t.descriptionCn })) ?? [];
+    if (config?.nameCn) this.nameCn = config.nameCn;
+    if (config?.descriptionCn) this.descriptionCn = config.descriptionCn;
+    if (config?.categoryCn) this.categoryCn = config.categoryCn;
+    if (config?.usage) this.usage = config.usage;
+    if (config?.usageCn) this.usageCn = config.usageCn;
   }
 
   async execute(toolName: string, params: Record<string, unknown>): Promise<SkillResult> {

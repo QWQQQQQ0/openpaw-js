@@ -10,13 +10,23 @@ export class PhoneScreenSkill implements Skill {
   category: string;
   description: string;
   tools: SkillTool[];
+  nameCn?: string;
+  descriptionCn?: string;
+  categoryCn?: string;
+  usage?: string;
+  usageCn?: string;
 
-  constructor(config?: { id?: string; name?: string; category?: string; description?: string; tools?: ToolDefinition[] }) {
+  constructor(config?: { id?: string; name?: string; category?: string; description?: string; tools?: ToolDefinition[]; nameCn?: string; descriptionCn?: string; categoryCn?: string; usage?: string; usageCn?: string }) {
     this.id = config?.id ?? 'phone_screen';
     this.name = config?.name ?? 'Phone Screen Control';
     this.category = config?.category ?? 'Device Automation';
     this.description = config?.description ?? 'View and control the Android phone screen via accessibility service.';
-    this.tools = config?.tools?.map(t => ({ name: t.name, description: t.description, parameters: t.parameters })) ?? [];
+    this.tools = config?.tools?.map(t => ({ name: t.name, description: t.description, parameters: t.parameters, nameCn: t.nameCn, descriptionCn: t.descriptionCn })) ?? [];
+    if (config?.nameCn) this.nameCn = config.nameCn;
+    if (config?.descriptionCn) this.descriptionCn = config.descriptionCn;
+    if (config?.categoryCn) this.categoryCn = config.categoryCn;
+    if (config?.usage) this.usage = config.usage;
+    if (config?.usageCn) this.usageCn = config.usageCn;
   }
 
   async execute(toolName: string, params: Record<string, unknown>): Promise<SkillResult> {

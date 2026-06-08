@@ -1,5 +1,10 @@
 // 来源: lib/services/web_extension_bridge_web.dart
 
+import type { IExtensionBridge, TabInfo } from '@/interfaces/extension-bridge';
+
+// Re-export types for backward compatibility
+export type { TabInfo } from '@/interfaces/extension-bridge';
+
 type StateListener = (state: Record<string, unknown>) => void;
 type CommandListener = (command: string) => void;
 
@@ -9,14 +14,7 @@ interface PendingCall {
   timer: ReturnType<typeof setTimeout>;
 }
 
-export interface TabInfo {
-  id: number;
-  title: string;
-  url: string;
-  active: boolean;
-}
-
-class ExtensionBridge {
+class ExtensionBridge implements IExtensionBridge {
   private _stateListeners: StateListener[] = [];
   private _commandListeners: CommandListener[] = [];
   private _pending = new Map<string, PendingCall>();

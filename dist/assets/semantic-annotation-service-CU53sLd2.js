@@ -1,0 +1,27 @@
+import{h as g}from"./index-3-libOPS.js";import{getModelService as k}from"./model-service-singleton-CFtuP5lH.js";async function F(t,e,i,o){if(t.length===0)return[];const c=k(),r=t.slice(0,50).map((n,p)=>{const s=n.bounds?` @(${n.bounds.left},${n.bounds.top},${n.bounds.width}x${n.bounds.height})`:"";return`${p+1}. [${n.role}] "${n.name||""}"${n.enabled?"":" (disabled)"}${s}`}).join(`
+`),l=`你是页面元素标注器。以下是应用"${e}"窗口中的可交互元素列表。
+为每个元素生成语义标注和能力信息。
+
+元素列表:
+${r}
+
+对每个元素输出一个 JSON 对象，组成数组。每个对象字段:
+- index: 元素序号（从1开始）
+- label: 简短语义名（中文，如"搜索按钮"、"用户名输入框"）
+- description: 一句话说明用途
+- keywords: 匹配关键词数组，包含中文和英文（如["搜索","search","查找"]）
+- interactionType: 交互方式，可选值: "click" | "doubleClick" | "rightClick" | "type" | "expand" | "select" | "drag"
+- options: 如果是下拉框/菜单/列表，列出可能的选项数组，每项有 label 和可选 description
+- inputFormat: 如果是输入框，说明输入格式要求（如"YYYY-MM-DD"、"数字"、"任意文本"）
+- notes: 交互技巧或注意事项（如"需要先点击展开"、"右键弹出菜单"）
+
+规则:
+- label 要简洁直观，用用户会说的自然语言
+- keywords 要覆盖用户可能的各种说法
+- interactionType 根据元素 role 推断: Button→click, Edit→type, ComboBox→expand, List→select, 菜单→click
+- options 只在能明显推断时填写（如常见的字体选择、语言选择等），否则留空
+- notes 记录重要的交互模式（如右键菜单、双击打开等）
+- 只输出 JSON 数组，无其他文字
+
+示例输出:
+[{"index":1,"label":"搜索按钮","description":"点击执行搜索","keywords":["搜索","search","查找","搜"],"interactionType":"click","notes":"点击后执行搜索"},{"index":2,"label":"搜索输入框","description":"输入搜索关键词","keywords":["搜索框","search","输入","关键词"],"interactionType":"type","inputFormat":"任意文本","notes":"输入后按回车或点击搜索按钮"}]`;try{const n=c.chatStream({scenario:g.raw,messages:[{role:"user",content:l}],provider:i,apiKey:o,tools:void 0});let p="";for await(const a of n)a.startsWith("__")||(p+=a);const s=p.match(/\[[\s\S]*\]/);if(!s)return[];const b=JSON.parse(s[0]),u=M(t);return b.map((a,Y)=>{const y=a.index-1,f=t[y];if(!f)return null;const h=S(f,u),m=a.interactionType?{interactionType:a.interactionType,options:a.options,inputFormat:a.inputFormat,notes:a.notes}:void 0;return{label:a.label||f.name||f.role,description:a.description||"",role:f.role,name:f.name,automationId:f.automation_id,relativeX:h.x,relativeY:h.y,keywords:a.keywords||[],capability:m}}).filter(Boolean)}catch(n){return console.debug("SemanticAnnotation: LLM annotation failed",n),[]}}function I(t,e,i){const o=[];function c(r,l){for(const n of r){if(l>10)break;if((n.clickable||n.inputType||n.href)&&n.bounds){const s=x(n),b=T(n),u=w(n);o.push({label:s,description:`${b}: ${s}`,role:b,name:s,automationId:n.selector??"",relativeX:n.bounds.x/e,relativeY:n.bounds.y/i,relativeWidth:n.bounds.width/e,relativeHeight:n.bounds.height/i,keywords:$(n),type:"interactive",capability:u})}n.children&&n.children.length>0&&c(n.children,l+1)}}return c(t,0),o}function x(t){const e=(t.text??"").trim();return e.length>0&&e.length<=50?e:t.tag==="input"?`${t.inputType??"text"}输入框`:t.tag==="a"?t.href?`链接: ${t.href.substring(0,30)}`:"链接":t.tag==="button"?e||"按钮":`${t.tag??"元素"}`}function T(t){if(t.tag==="input")switch(t.inputType){case"text":case"search":return"Edit";case"button":case"submit":return"Button";case"checkbox":return"CheckBox";case"radio":return"RadioButton";default:return"Edit"}return t.tag==="button"?"Button":t.tag==="a"?"Hyperlink":t.tag==="select"?"ComboBox":t.tag==="textarea"?"Edit":"Control"}function $(t){const e=[],i=(t.text??"").trim();return i.length>0&&i.length<=30&&e.push(i),t.tag==="input"&&e.push("输入","input","输入框"),t.tag==="button"&&e.push("按钮","button","点击"),t.tag==="a"&&e.push("链接","link"),e}function w(t){if(t.tag==="input")switch(t.inputType??"text"){case"text":case"search":case"email":case"url":return{interactionType:"type",inputFormat:"任意文本"};case"number":return{interactionType:"type",inputFormat:"数字"};case"date":return{interactionType:"type",inputFormat:"YYYY-MM-DD"};case"checkbox":return{interactionType:"click",notes:"点击切换勾选状态"};case"radio":return{interactionType:"click",notes:"点击选择此选项"};case"submit":case"button":return{interactionType:"click"};default:return{interactionType:"type"}}if(t.tag==="button")return{interactionType:"click"};if(t.tag==="a")return{interactionType:"click",notes:"点击跳转链接"};if(t.tag==="select")return{interactionType:"expand",notes:"点击展开下拉框选择选项"};if(t.tag==="textarea")return{interactionType:"type",inputFormat:"多行文本"};if(t.clickable)return{interactionType:"click"}}function N(t,e){if(e.length===0)return null;const i=d(t),o=v(i);if(o.length===0)return null;let c=null;for(const r of e){const l=d(r.label),n=d(r.description),p=r.keywords.map(d).join(" "),s=r.capability?.options?.map(a=>d(a.label)).join(" ")??"",b=`${l} ${n} ${p} ${s}`;let u=0;for(const a of o)b.includes(a)&&(u+=1),l.includes(a)&&(u+=2),s.includes(a)&&(u+=3);u>0&&(!c||u>c.score)&&(c={ann:r,score:u})}return c&&c.score>=o.length*.3?c.ann:null}function d(t){return t.trim().toLowerCase().replace(/[\s　]+/g,"").replace(/[，。！？、；：""''【】（）《》,.!?;:'"()[\]{}]/g,"")}function v(t){const e=[];let i="";for(const o of t)o.charCodeAt(0)>127?(i&&(e.push(i),i=""),e.push(o)):i+=o;return i&&e.push(i),e.filter(o=>o.length>0)}function M(t){let e=1/0,i=1/0,o=-1/0,c=-1/0;for(const r of t)r.bounds&&(r.bounds.left<e&&(e=r.bounds.left),r.bounds.top<i&&(i=r.bounds.top),r.bounds.right>o&&(o=r.bounds.right),r.bounds.bottom>c&&(c=r.bounds.bottom));return e===1/0?{left:0,top:0,width:1,height:1}:{left:e,top:i,width:o-e||1,height:c-i||1}}function S(t,e){if(!t.bounds)return{x:.5,y:.5};const i=(t.bounds.left+t.bounds.right)/2,o=(t.bounds.top+t.bounds.bottom)/2;return{x:Math.round((i-e.left)/e.width*100)/100,y:Math.round((o-e.top)/e.height*100)/100}}export{F as a,I as d,N as m};

@@ -30,7 +30,7 @@ function ProviderCard({ config }: { config: ProviderConfig }) {
   }, []);
 
   return (
-    <div className="mx-3 mb-2 rounded-xl border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 overflow-hidden">
+    <div className="mx-3 mb-2 rounded-xl border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900">
       <div className="flex items-center gap-3 px-4 py-3">
         <div className="w-10 h-10 rounded-full bg-zinc-50 dark:bg-zinc-800 flex items-center justify-center shrink-0">
           {typeIcons[config.type] ?? <Cpu size={18} className="text-zinc-400" />}
@@ -44,6 +44,11 @@ function ProviderCard({ config }: { config: ProviderConfig }) {
             {config.isDefault && (
               <span className="px-1.5 py-0.5 rounded-full bg-blue-100 dark:bg-blue-900 text-[10px] font-medium text-blue-600 dark:text-blue-400 shrink-0">
                 {t('modellist.default')}
+              </span>
+            )}
+            {config.supportsMultimodal !== false && (
+              <span className="px-1.5 py-0.5 rounded-full bg-purple-100 dark:bg-purple-900 text-[10px] font-medium text-purple-600 dark:text-purple-400 shrink-0">
+                {t('modellist.multimodal')}
               </span>
             )}
           </div>

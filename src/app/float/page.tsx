@@ -1,9 +1,11 @@
 'use client';
 
 import { useState, useRef, useCallback, useEffect } from 'react';
-import { Camera, Play, StopCircle, Wrench, CheckCircle, XCircle, GripHorizontal, X, Minus, MessageSquare, Link, ImageIcon } from 'lucide-react';
+import { Camera, Play, StopCircle, Wrench, CheckCircle, XCircle, GripHorizontal, X, Minus, MessageSquare, Link, ImageIcon, Trash2, Cpu, Settings } from 'lucide-react';
+import { extractBbox, BboxOverlay } from '@/components/bbox-overlay';
 import { desktopService, WindowInfo } from '@/services/desktop-service';
 import { DesktopScreenSkill } from '@/skills/desktop';
+import { WebScreenSkill } from '@/skills/web';
 import { Switch } from '@/components/ui/switch';
 import { MessageInput } from '@/components/chat/message-input';
 import type { MessageContent, LLMMessage, ContentPart } from '@/types/message';
@@ -48,10 +50,12 @@ export default function FloatPage() {
   const [mode, setMode] = useState<'chat' | 'task'>(() => readLocal('float_mode', 'chat'));
   const [sendToModel, setSendToModel] = useState(() => readLocal('float_send_to_model', true));
   const [allowImagePaste, setAllowImagePaste] = useState(() => readLocal('float_allow_image_paste', true));
+  const [noSystemPrompt, setNoSystemPrompt] = useState(() => readLocal('float_no_system_prompt', false));
 
   const persistMode = useCallback((v: 'chat' | 'task') => { setMode(v); writeLocal('float_mode', v); }, []);
   const persistSendToModel = useCallback((v: boolean) => { setSendToModel(v); writeLocal('float_send_to_model', v); }, []);
   const persistAllowImagePaste = useCallback((v: boolean) => { setAllowImagePaste(v); writeLocal('float_allow_image_paste', v); }, []);
+  const persistNoSystemPrompt = useCallback((v: boolean) => { setNoSystemPrompt(v); writeLocal('float_no_system_prompt', v); }, []);
 
   // ── Chat state ──
   const [chatMessages, setChatMessages] = useState<FloatChatMsg[]>([]);
@@ -64,7 +68,21 @@ export default function FloatPage() {
   const [error, setError] = useState<string | null>(null);
   const [isAutomating, setIsAutomating] = useState(false);
   const [isCapturing, setIsCapturing] = useState(false);
+  const [showSettings, setShowSettings] = useState(false);
   const goalRef = useRef<HTMLInputElement>(null);
+  const settingsRef = useRef<HTMLDivElement>(null);
+
+  // Close settings popover on outside click
+  useEffect(() => {
+    if (!showSettings) return;
+    const handler = (e: MouseEvent) => {
+      if (settingsRef.current && !settingsRef.current.contains(e.target as Node)) {
+        setShowSettings(false);
+      }
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [showSettings]);
   const chatEndRef = useRef<HTMLDivElement>(null);
 
   // ── Auto-scroll chat ──
@@ -140,18 +158,17 @@ export default function FloatPage() {
         return;
       }
 
-      const { ModelCallService } = await import('@/adapters/model-call-service');
       const skill = new DesktopScreenSkill();
-      const modelService = new ModelCallService();
-      const agent = new DesktopAutomationAgent(modelService, skill);
+      const webSkill = new WebScreenSkill();
+      const { getCacheService } = await import('@/services/cache-service-singleton');
+      const agent = new DesktopAutomationAgent(skill, getCacheService());
 
       const turns = await agent.executeCommand({
-        screenshotBase64: screenshot ?? undefined,
         goal,
         provider: config,
         apiKey,
         windows,
-        maxTurns: 5,
+        maxTurns: 10,
         onStep: async (event) => {
           switch (event.type) {
             case 'before_tool': {
@@ -221,8 +238,9 @@ export default function FloatPage() {
       }
       if (!apiKey) throw new Error('API key is empty after decrypt');
 
-      const { ModelCallService, ModelScenario } = await import('@/adapters/model-call-service');
-      const modelService = new ModelCallService();
+      const { ModelScenario } = await import('@/adapters/model-call-service');
+      const { getModelService } = await import('@/services/model-service-singleton');
+      const modelService = getModelService();
 
       // Build LLM messages from history
       const llmMessages: LLMMessage[] = chatMessages.map((m) => {
@@ -247,7 +265,7 @@ export default function FloatPage() {
       });
 
       const stream = modelService.chatStream({
-        scenario: ModelScenario.chat,
+        scenario: noSystemPrompt ? ModelScenario.raw : ModelScenario.chat,
         messages: llmMessages,
         provider: config,
         apiKey,
@@ -258,7 +276,7 @@ export default function FloatPage() {
         if (chunk.startsWith('__ERROR__:')) {
           throw new Error(chunk.substring(10));
         }
-        if (chunk.startsWith('__TOOLS__:')) {
+        if (chunk.startsWith('__TOOLS__:') || chunk.startsWith('__REASONING__:')) {
           continue;
         }
         responseText += chunk;
@@ -277,7 +295,7 @@ export default function FloatPage() {
     } finally {
       setChatStreaming(false);
     }
-  }, [sendToModel, chatMessages]);
+  }, [sendToModel, chatMessages, noSystemPrompt]);
 
   // ── Window controls ──
   const handleClose = useCallback(async () => {
@@ -292,7 +310,7 @@ export default function FloatPage() {
 
   // ── Render ──
   return (
-    <div className="flex flex-col h-screen bg-white dark:bg-zinc-950 text-zinc-900 dark:text-zinc-100 select-none">
+    <div className="flex flex-col h-screen bg-white dark:bg-zinc-950 text-zinc-900 dark:text-zinc-100">
       {/* Custom title bar */}
       <div
         className="flex items-center justify-between px-3 py-2 bg-zinc-100 dark:bg-zinc-900 border-b border-zinc-200 dark:border-zinc-800 shrink-0"
@@ -312,37 +330,72 @@ export default function FloatPage() {
         </div>
       </div>
 
-      {/* Mode tabs + toggles */}
-      <div className="flex items-center justify-between px-3 py-1.5 border-b border-zinc-200 dark:border-zinc-800 shrink-0 gap-2">
-        <div className="flex items-center gap-0.5 bg-zinc-100 dark:bg-zinc-800 rounded-lg p-0.5">
-          <button
-            onClick={() => persistMode('chat')}
-            className={`flex items-center gap-1 px-2.5 py-1 rounded-md text-[12px] font-medium transition-colors ${
-              mode === 'chat' ? 'bg-white dark:bg-zinc-700 text-zinc-900 dark:text-zinc-100 shadow-sm' : 'text-zinc-500 dark:text-zinc-400'
-            }`}
-          >
-            <MessageSquare size={13} />
-            Chat
-          </button>
-          <button
-            onClick={() => persistMode('task')}
-            className={`flex items-center gap-1 px-2.5 py-1 rounded-md text-[12px] font-medium transition-colors ${
-              mode === 'task' ? 'bg-white dark:bg-zinc-700 text-zinc-900 dark:text-zinc-100 shadow-sm' : 'text-zinc-500 dark:text-zinc-400'
-            }`}
-          >
-            <Wrench size={13} />
-            Task
-          </button>
+      {/* Mode tabs + settings */}
+      <div className="flex items-center justify-between px-3 py-1.5 border-b border-zinc-200 dark:border-zinc-800 shrink-0">
+        <div className="flex items-center gap-1">
+          <div className="flex items-center gap-0.5 bg-zinc-100 dark:bg-zinc-800 rounded-lg p-0.5">
+            <button
+              onClick={() => persistMode('chat')}
+              className={`flex items-center gap-1 px-2.5 py-1 rounded-md text-[12px] font-medium transition-colors ${
+                mode === 'chat' ? 'bg-white dark:bg-zinc-700 text-zinc-900 dark:text-zinc-100 shadow-sm' : 'text-zinc-500 dark:text-zinc-400'
+              }`}
+            >
+              <MessageSquare size={13} />
+              Chat
+            </button>
+            <button
+              onClick={() => persistMode('task')}
+              className={`flex items-center gap-1 px-2.5 py-1 rounded-md text-[12px] font-medium transition-colors ${
+                mode === 'task' ? 'bg-white dark:bg-zinc-700 text-zinc-900 dark:text-zinc-100 shadow-sm' : 'text-zinc-500 dark:text-zinc-400'
+              }`}
+            >
+              <Wrench size={13} />
+              Task
+            </button>
+          </div>
+          {mode === 'chat' && chatMessages.length > 0 && (
+            <button
+              onClick={() => setChatMessages([])}
+              className="p-1 rounded text-zinc-400 hover:text-red-500 transition-colors"
+              title="Clear context"
+            >
+              <Trash2 size={13} />
+            </button>
+          )}
         </div>
-        <div className="flex items-center gap-2">
-          <div className="flex items-center gap-1" title={sendToModel ? 'Send to model: ON' : 'Send to model: OFF (local save only)'}>
-            <Link size={12} className={sendToModel ? 'text-blue-500' : 'text-zinc-400'} />
-            <Switch checked={sendToModel} onChange={persistSendToModel} />
-          </div>
-          <div className="flex items-center gap-1" title={allowImagePaste ? 'Image paste: ON' : 'Image paste: OFF'}>
-            <ImageIcon size={12} className={allowImagePaste ? 'text-blue-500' : 'text-zinc-400'} />
-            <Switch checked={allowImagePaste} onChange={persistAllowImagePaste} />
-          </div>
+        <div className="relative" ref={settingsRef}>
+          <button
+            onClick={() => setShowSettings((v) => !v)}
+            className={`p-1 rounded transition-colors ${showSettings ? 'bg-zinc-200 dark:bg-zinc-700 text-zinc-700 dark:text-zinc-300' : 'text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-300'}`}
+            title="Settings"
+          >
+            <Settings size={14} />
+          </button>
+          {showSettings && (
+            <div className="absolute right-0 top-full mt-1 z-50 w-52 bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-700 rounded-lg shadow-lg p-2.5 space-y-2.5">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-1.5 text-[11px] text-zinc-600 dark:text-zinc-400">
+                  <Cpu size={11} className={noSystemPrompt ? 'text-zinc-400' : 'text-blue-500'} />
+                  System Prompt
+                </div>
+                <Switch checked={!noSystemPrompt} onChange={(v) => persistNoSystemPrompt(!v)} />
+              </div>
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-1.5 text-[11px] text-zinc-600 dark:text-zinc-400">
+                  <Link size={11} className={sendToModel ? 'text-blue-500' : 'text-zinc-400'} />
+                  Send to Model
+                </div>
+                <Switch checked={sendToModel} onChange={persistSendToModel} />
+              </div>
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-1.5 text-[11px] text-zinc-600 dark:text-zinc-400">
+                  <ImageIcon size={11} className={allowImagePaste ? 'text-blue-500' : 'text-zinc-400'} />
+                  Image Paste
+                </div>
+                <Switch checked={allowImagePaste} onChange={persistAllowImagePaste} />
+              </div>
+            </div>
+          )}
         </div>
       </div>
 
@@ -356,7 +409,10 @@ export default function FloatPage() {
                 {sendToModel ? 'Start a conversation' : 'Paste or type content to save locally'}
               </div>
             )}
-            {chatMessages.map((msg) => (
+            {chatMessages.map((msg, i) => {
+              const prevMsg = i > 0 ? chatMessages[i - 1] : undefined;
+              const bbox = msg.role === 'assistant' && msg.status === 'done' && prevMsg?.images?.length ? extractBbox(msg.text) : null;
+              return (
               <div key={msg.id} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
                 <div className={`max-w-[85%] rounded-xl px-3 py-2 text-[13px] leading-relaxed ${
                   msg.role === 'user'
@@ -373,12 +429,14 @@ export default function FloatPage() {
                     </div>
                   )}
                   {msg.text && <div className="whitespace-pre-wrap break-words">{msg.text}</div>}
+                  {bbox && <BboxOverlay imageUrl={prevMsg!.images![0]} bbox={bbox} />}
                   {msg.status === 'streaming' && !msg.text && (
                     <span className="inline-block w-2 h-4 bg-zinc-400 animate-pulse rounded-sm" />
                   )}
                 </div>
               </div>
-            ))}
+            );
+            })}
             <div ref={chatEndRef} />
           </div>
 
@@ -393,10 +451,10 @@ export default function FloatPage() {
       ) : (
         <>
           {/* Screenshot preview */}
-          <div className="shrink-0 border-b border-zinc-200 dark:border-zinc-800">
+          <div className="basis-[30%] min-h-0 border-b border-zinc-200 dark:border-zinc-800">
             {screenshot ? (
-              <div className="relative group">
-                <img src={screenshot} alt="Desktop" className="w-full h-32 object-cover" />
+              <div className="relative group h-full">
+                <img src={screenshot} alt="Desktop" className="w-full h-full object-cover" />
                 <button
                   onClick={handleRefresh}
                   disabled={isCapturing}
@@ -406,7 +464,7 @@ export default function FloatPage() {
                 </button>
               </div>
             ) : (
-              <div className="h-32 flex items-center justify-center bg-zinc-100 dark:bg-zinc-900">
+              <div className="h-full flex items-center justify-center bg-zinc-100 dark:bg-zinc-900">
                 <div className="w-6 h-6 border-2 border-zinc-300 border-t-blue-500 rounded-full animate-spin" />
               </div>
             )}
@@ -415,7 +473,7 @@ export default function FloatPage() {
           {/* Action log */}
           {actionLog.length > 0 && (
             <div className="flex-1 overflow-y-auto px-2 py-1 min-h-0">
-              {actionLog.map((log, i) => (
+              {[...actionLog].reverse().map((log, i) => (
                 <div key={i} className="flex items-center gap-1.5 py-0.5 text-[11px]">
                   {log.success ? (
                     <CheckCircle size={10} className="text-green-500 shrink-0" />

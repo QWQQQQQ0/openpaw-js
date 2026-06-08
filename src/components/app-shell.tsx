@@ -1,9 +1,10 @@
 import { useState } from 'react';
 import { NavLink, Outlet, useLocation } from 'react-router-dom';
-import { MessageSquare, Globe, Monitor, Smartphone, AppWindow, Cpu, Wrench, Settings, PanelLeftClose, PanelLeft, PawPrint, Menu } from 'lucide-react';
+import { MessageSquare, Globe, Monitor, Smartphone, AppWindow, Cpu, Wrench, Settings, PanelLeftClose, PanelLeft, PawPrint, Menu, Eye, Layers } from 'lucide-react';
 import { FloatWindowToggle } from './float-window-toggle';
 import { useT } from '@/i18n/strings';
 import { ErrorBoundary } from '@/components/error-boundary';
+import { AppInitWrapper } from '@/components/app-init-wrapper';
 import { isTauri, isMobile } from '@/utils/platform';
 
 interface NavItemDef {
@@ -27,6 +28,8 @@ function Sidebar({ open, onClose }: { open: boolean; onClose: () => void }) {
     { icon: <AppWindow size={20} />, label: t('nav.apps'), to: '/apps', show: true },
     { icon: <Cpu size={20} />, label: t('nav.models'), to: '/models', show: true },
     { icon: <Wrench size={20} />, label: t('nav.skills'), to: '/skills', show: true },
+    { icon: <Eye size={20} />, label: t('nav.watchers'), to: '/watchers', show: isDesktopLike },
+    { icon: <Layers size={20} />, label: t('nav.knowledge'), to: '/knowledge', show: isDesktopLike },
     { icon: <Settings size={20} />, label: t('nav.settings'), to: '/settings', show: true },
   ];
 
@@ -102,6 +105,7 @@ export function AppShell() {
 
   return (
     <div className="flex h-full">
+      <AppInitWrapper />
       {/* Desktop sidebar (always visible) */}
       <div className="hidden lg:block">
         <Sidebar open={true} onClose={() => {}} />

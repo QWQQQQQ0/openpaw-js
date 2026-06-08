@@ -68,8 +68,8 @@ export function FloatWindowToggle() {
         visible: false,
       });
 
-      win.once('tauri://error', (e) => {
-        console.error('[FloatWindow] creation error:', e);
+      win.once('tauri://error', () => {
+        // ignore
       });
 
       await new Promise<void>((resolve) => {
@@ -98,8 +98,8 @@ export function FloatWindowToggle() {
       await win.show();
       await win.setFocus();
       setIsOpen(true);
-    } catch (e) {
-      console.error('Float window toggle failed:', e);
+    } catch {
+      // ignore
     }
   }, [isOpen]);
 

@@ -3,6 +3,8 @@ import { ThemeProvider } from './theme-provider';
 import { useSettingsStore } from '@/stores/settings-store';
 import { useModelConfigStore } from '@/stores/model-config-store';
 import { setLocale } from '@/i18n/strings';
+import { appLogger } from '@/services/app-logger';
+import { watcherManager } from '@/services/watcher';
 
 export function AppInitWrapper() {
   const loadSettings = useSettingsStore((s) => s.load);
@@ -11,8 +13,14 @@ export function AppInitWrapper() {
   const locale = useSettingsStore((s) => s.locale);
 
   useEffect(() => {
-    loadSettings();
-    loadConfigs();
+    const init = async () => {
+      loadSettings();
+      await loadConfigs();
+      appLogger.start();
+      watcherManager.restore().catch(() => {});
+      watcherManager.initSync().catch(() => {});
+    };
+    init();
   }, [loadSettings, loadConfigs]);
 
   useEffect(() => {

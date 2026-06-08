@@ -23,8 +23,21 @@
     "core:window:allow-close",
     "core:window:allow-destroy",
     "core:window:allow-minimize",
+    "core:window:allow-set-size",
+    "core:window:allow-set-min-size",
+    "core:window:allow-set-max-size",
+    "core:window:allow-set-resizable",
     "sql:default",
     "sql:allow-execute",
-    "shell:default"
+    "shell:default",
+    "fs:default",
+    "fs:allow-exists",
+    "fs:allow-read-text-file",
+    "fs:allow-write-text-file",
+    "fs:allow-read-dir",
+    "fs:allow-mkdir",
+    "fs:allow-remove",
+    "fs:allow-rename",
+    "fs:allow-copy-file"
   ]
 }

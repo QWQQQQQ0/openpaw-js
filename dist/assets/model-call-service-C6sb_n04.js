@@ -1,0 +1,1 @@
+import{h as t,U as o}from"./index-3-libOPS.js";import"./vendor-markdown-DkZTs8jq.js";import"./vendor-react-CfjWFXXn.js";import"./vendor-state-D0g0rz4W.js";import"./vendor-tauri-DP7f-jEB.js";class p extends o{}export{p as ModelCallService,t as ModelScenario};

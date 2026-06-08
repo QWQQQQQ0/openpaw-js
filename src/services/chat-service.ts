@@ -1,6 +1,7 @@
 // 来源: lib/services/chat_service.dart
 
-import { ModelCallService, ModelScenario } from '@/adapters/model-call-service';
+import { getModelService } from '@/services/model-service-singleton';
+import { ChatAgent } from '@/agents/chat-api';
 import type { LLMMessage, ChatMessage, MessageContent, ToolCall, ToolCallResult } from '@/types/message';
 import { serializeContent, deserializeContent } from '@/utils/content';
 import { getDB } from '@/db';
@@ -26,6 +27,8 @@ interface SendMessageParams {
     model: string;
     encryptedApiKey: string;
     supportsTools?: boolean;
+    thinkingMode?: boolean;
+    supportsMultimodal?: boolean;
   };
   tools?: Record<string, unknown>[];
 }
@@ -52,7 +55,10 @@ function buildInternal(source: ChatMessage[]): LLMMessage[] {
     } else if (m.role === 'assistant') {
       const hasContent = typeof m.content === 'string' ? m.content.length > 0 : true;
       if (!hasContent && !m.toolCalls) continue;
-      result.push({ role: 'assistant', content: m.content, toolCalls: m.toolCalls });
+      const llmMsg: LLMMessage = { role: 'assistant', content: m.content, toolCalls: m.toolCalls };
+      // MiMo 等思考模型：回传 reasoning_content 避免多轮工具调用 400 错误
+      if (m.reasoning_content) llmMsg.reasoning_content = m.reasoning_content;
+      result.push(llmMsg);
     } else {
       result.push({ role: m.role, content: m.content });
     }
@@ -67,7 +73,7 @@ function buildVisible(source: ChatMessage[]): ChatMessage[] {
 
 export async function* sendChatMessage(params: SendMessageParams): AsyncGenerator<ChatStateUpdate> {
   const { conversationId, messages, provider, tools } = params;
-  const modelService = new ModelCallService();
+  const modelService = getModelService();
 
   const visibleMessages = [...messages];
   const internalMessages: ChatMessage[] = [...messages];
@@ -93,10 +99,11 @@ export async function* sendChatMessage(params: SendMessageParams): AsyncGenerato
     const llmMessages = buildInternal(internalMessages);
     let textBuffer = '';
     let toolCallJson: string | undefined;
+    let reasoningBuffer = '';
 
     try {
-      const stream = modelService.chatStream({
-        scenario: ModelScenario.chat,
+      const chatAgent = new ChatAgent();
+      const stream = chatAgent.chat({
         messages: llmMessages,
         provider: {
           id: provider.id,
@@ -107,6 +114,7 @@ export async function* sendChatMessage(params: SendMessageParams): AsyncGenerato
           encryptedApiKey: provider.encryptedApiKey,
           isDefault: false,
           supportsTools: provider.supportsTools ?? true,
+          thinkingMode: provider.thinkingMode,
           createdAt: '',
         },
         apiKey: provider.encryptedApiKey,
@@ -121,15 +129,17 @@ export async function* sendChatMessage(params: SendMessageParams): AsyncGenerato
           };
           yield { messages: buildVisible(visibleMessages), debugMessages: [...debugMessages], isStreaming: false, error: errMsg };
           return;
+        } else if (chunk.startsWith('__REASONING__:')) {
+          reasoningBuffer = chunk.substring(14);
         } else if (chunk.startsWith('__TOOLS__:')) {
           toolCallJson = chunk.substring(10);
         } else {
           textBuffer += chunk;
           visibleMessages[visibleMessages.length - 1] = {
-            ...assistantMsg, content: textBuffer,
+            ...assistantMsg, content: textBuffer, reasoning_content: reasoningBuffer || undefined,
           };
           internalMessages[internalMessages.length - 1] = {
-            ...assistantMsg, content: textBuffer,
+            ...assistantMsg, content: textBuffer, reasoning_content: reasoningBuffer || undefined,
           };
           yield { messages: buildVisible(visibleMessages), debugMessages: [...debugMessages], isStreaming: true };
         }
@@ -150,22 +160,27 @@ export async function* sendChatMessage(params: SendMessageParams): AsyncGenerato
     if (toolCallJson && _skillExecutor) {
       try {
         const toolCalls = JSON.parse(toolCallJson) as Array<Record<string, unknown>>;
+        console.log(`[chat-service] ◀ tool calls received: ${toolCalls.length} call(s)`, toolCalls.map(tc => {
+          const fn = tc['function'] as Record<string, unknown>;
+          return fn['name'];
+        }));
 
         // Update assistant message with tool_calls
+        const rc = reasoningBuffer || undefined;
         if (rawResponse.length > 0) {
           visibleMessages[visibleMessages.length - 1] = {
             ...assistantMsg, content: rawResponse, status: 'done',
-            toolCalls: toolCalls as unknown as ToolCall[],
+            toolCalls: toolCalls as unknown as ToolCall[], reasoning_content: rc,
           };
           internalMessages[internalMessages.length - 1] = {
             ...assistantMsg, content: rawResponse, status: 'done',
-            toolCalls: toolCalls as unknown as ToolCall[],
+            toolCalls: toolCalls as unknown as ToolCall[], reasoning_content: rc,
           };
         } else {
           visibleMessages.pop();
           internalMessages[internalMessages.length - 1] = {
             ...assistantMsg, content: '', status: 'done',
-            toolCalls: toolCalls as unknown as ToolCall[],
+            toolCalls: toolCalls as unknown as ToolCall[], reasoning_content: rc,
           };
         }
 
@@ -191,7 +206,9 @@ export async function* sendChatMessage(params: SendMessageParams): AsyncGenerato
             status: 'done',
           });
 
+          console.log(`[chat-service] ▶ executing tool: ${funcName}`, args);
           const result = await _skillExecutor(funcName, args);
+          console.log(`[chat-service] ✓ tool result: ${funcName}`, result.success ? 'success' : 'failed', result.message?.substring(0, 120));
 
           debugMessages.push({
             id: tcId,
@@ -215,6 +232,7 @@ export async function* sendChatMessage(params: SendMessageParams): AsyncGenerato
         yield { messages: buildVisible(visibleMessages), debugMessages: [...debugMessages], isStreaming: true };
         continue; // Next turn
       } catch (e) {
+        console.error(`[chat-service] ✗ tool execution error:`, e);
         debugMessages.push({
           id: crypto.randomUUID(),
           conversationId,
@@ -229,15 +247,16 @@ export async function* sendChatMessage(params: SendMessageParams): AsyncGenerato
     // ── No tool calls → conversation turn complete ──
     const db = await getDB();
     if (rawResponse.length > 0) {
+      const rc = reasoningBuffer || undefined;
       visibleMessages[visibleMessages.length - 1] = {
-        ...assistantMsg, content: rawResponse, status: 'done',
+        ...assistantMsg, content: rawResponse, status: 'done', reasoning_content: rc,
       };
       internalMessages[internalMessages.length - 1] = {
-        ...assistantMsg, content: rawResponse, status: 'done',
+        ...assistantMsg, content: rawResponse, status: 'done', reasoning_content: rc,
       };
       await db.execute(
-        'INSERT INTO messages (id, conversation_id, role, content, timestamp) VALUES (?, ?, ?, ?, ?)',
-        [assistantMsgId, conversationId, 'assistant', rawResponse, new Date().toISOString()]
+        'INSERT INTO messages (id, conversation_id, role, content, timestamp, reasoning_content) VALUES (?, ?, ?, ?, ?, ?)',
+        [assistantMsgId, conversationId, 'assistant', rawResponse, new Date().toISOString(), rc ?? null]
       );
     } else {
       visibleMessages.pop();

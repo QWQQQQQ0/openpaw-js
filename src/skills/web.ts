@@ -3,25 +3,9 @@
 import type { Skill, SkillTool } from './skill';
 import { SkillOk, SkillFail } from './skill';
 import type { SkillResult, ToolDefinition } from '@/types/skill';
-import { extensionBridge } from '@/services/extension-bridge';
-import { webScreenService } from '@/services/web-screen-service';
-
-const defaultTools: SkillTool[] = [
-  { name: 'web_get_ui', description: 'Get the DOM tree of the current page. Returns an array of interactive node objects with: tag, text, selector, bounds (x/y/width/height), clickable, inViewport, inputType, href.', parameters: { type: 'object', properties: {} } },
-  { name: 'web_screenshot', description: 'Take a screenshot of the current browser tab. Returns a base64-encoded JPEG image.', parameters: { type: 'object', properties: {} } },
-  { name: 'web_click', description: 'Click at coordinates (x, y) on the page. Use web_get_ui first to find element coordinates.', parameters: { type: 'object', properties: { x: { type: 'number', description: 'X coordinate on the page' }, y: { type: 'number', description: 'Y coordinate on the page' } }, required: ['x', 'y'] } },
-  { name: 'web_click_element', description: "Click an element by CSS selector. Example selectors: '#search', '.btn-primary', 'input[name=\"q\"]'.", parameters: { type: 'object', properties: { selector: { type: 'string', description: 'CSS selector of the element to click' } }, required: ['selector'] } },
-  { name: 'web_type', description: 'Type text into the currently focused input field. Click the input first to focus it.', parameters: { type: 'object', properties: { text: { type: 'string', description: 'Text to type' } }, required: ['text'] } },
-  { name: 'web_fill', description: 'Fill a specific input field by CSS selector. Focuses the field and sets its value.', parameters: { type: 'object', properties: { selector: { type: 'string', description: 'CSS selector of the input field' }, text: { type: 'string', description: 'Text to fill' } }, required: ['selector', 'text'] } },
-  { name: 'web_scroll', description: 'Scroll the page by (dx, dy) pixels. Positive dy scrolls down (300 ≈ one viewport).', parameters: { type: 'object', properties: { dx: { type: 'number', description: 'Horizontal scroll in pixels' }, dy: { type: 'number', description: 'Vertical scroll in pixels' } }, required: ['dx', 'dy'] } },
-  { name: 'web_scroll_into_view', description: 'Scroll until an element identified by CSS selector is visible in the viewport.', parameters: { type: 'object', properties: { selector: { type: 'string', description: 'CSS selector of the element to scroll to' } }, required: ['selector'] } },
-  { name: 'web_press_key', description: "Press a keyboard key (e.g., 'Enter', 'Escape', 'Tab', 'ArrowDown', 'ArrowUp') on the active element.", parameters: { type: 'object', properties: { key: { type: 'string', description: 'Key name to press' } }, required: ['key'] } },
-  { name: 'web_navigate', description: 'Navigate the browser to a URL. Opens in the current tab.', parameters: { type: 'object', properties: { url: { type: 'string', description: 'Full URL to navigate to' } }, required: ['url'] } },
-  { name: 'web_extract', description: 'Extract text content from an element by CSS selector.', parameters: { type: 'object', properties: { selector: { type: 'string', description: 'CSS selector of the element to extract text from' } }, required: ['selector'] } },
-  { name: 'web_list_tabs', description: "List all open browser tabs with their IDs, titles, and URLs.", parameters: { type: 'object', properties: {} } },
-  { name: 'web_wait', description: 'Wait for a specified duration to allow the page to load or system to respond.', parameters: { type: 'object', properties: { durationMs: { type: 'integer', description: 'Time to wait in milliseconds, default 1000' } }, required: ['durationMs'] } },
-  { name: 'web_done', description: 'Signal that the automation task is complete.', parameters: { type: 'object', properties: { summary: { type: 'string', description: 'Summary of what was accomplished' } }, required: ['summary'] } },
-];
+import type { IExtensionBridge } from '@/interfaces/extension-bridge';
+import type { IWebScreenService } from '@/interfaces/web-screen-service';
+import type { IDesktopService } from '@/interfaces/desktop-service';
 
 export class WebScreenSkill implements Skill {
   id: string;
@@ -29,16 +13,43 @@ export class WebScreenSkill implements Skill {
   category: string;
   description: string;
   tools: SkillTool[];
+  nameCn?: string;
+  descriptionCn?: string;
+  categoryCn?: string;
+  usage?: string;
+  usageCn?: string;
 
-  constructor(config?: { id?: string; name?: string; category?: string; description?: string; tools?: ToolDefinition[] }) {
+  private extensionBridge: IExtensionBridge;
+  private webScreenService: IWebScreenService;
+  private desktopService: IDesktopService;
+
+  constructor(
+    extensionBridge: IExtensionBridge,
+    webScreenService: IWebScreenService,
+    desktopService: IDesktopService,
+    config?: { id?: string; name?: string; category?: string; description?: string; tools?: ToolDefinition[]; nameCn?: string; descriptionCn?: string; categoryCn?: string; usage?: string; usageCn?: string }
+  ) {
+    this.extensionBridge = extensionBridge;
+    this.webScreenService = webScreenService;
+    this.desktopService = desktopService;
     this.id = config?.id ?? 'web_screen';
     this.name = config?.name ?? 'Web Screen Control';
     this.category = config?.category ?? 'Device Automation';
     this.description = config?.description ?? 'View and control web pages via browser extension or iframe.';
-    this.tools = config?.tools?.map(t => ({ name: t.name, description: t.description, parameters: t.parameters })) ?? defaultTools;
+    this.tools = config?.tools?.map(t => ({ name: t.name, description: t.description, parameters: t.parameters, nameCn: t.nameCn, descriptionCn: t.descriptionCn })) ?? [];
+    if (config?.nameCn) this.nameCn = config.nameCn;
+    if (config?.descriptionCn) this.descriptionCn = config.descriptionCn;
+    if (config?.categoryCn) this.categoryCn = config.categoryCn;
+    if (config?.usage) this.usage = config.usage;
+    if (config?.usageCn) this.usageCn = config.usageCn;
   }
 
   async execute(toolName: string, params: Record<string, unknown>): Promise<SkillResult> {
+    // ── Playwright tools (Tauri → Python bridge) ──
+    if (toolName.startsWith('web_pw_')) {
+      return this.executePlaywright(toolName, params);
+    }
+
     // Generic tools that don't need a browser backend
     switch (toolName) {
       case 'web_wait': {
@@ -52,16 +63,58 @@ export class WebScreenSkill implements Skill {
       }
     }
 
-    // Prefer iframe context (generated app) if available, else use extension
-    if (webScreenService.hasIframe) {
+    // Legacy tools: prefer iframe, then extension
+    if (this.webScreenService.hasIframe) {
       return this.executeIframe(toolName, params);
     }
-    if (extensionBridge.isConnected) {
+    if (this.extensionBridge.isConnected) {
       return this.executeExtension(toolName, params);
     }
     return SkillFail(
       'No web context available. Open a generated app or connect the browser extension.',
     );
+  }
+
+  /** Execute Playwright-backed web tools via Tauri Python bridge. */
+  private async executePlaywright(toolName: string, params: Record<string, unknown>): Promise<SkillResult> {
+    try {
+      let data: Record<string, unknown> | undefined;
+
+      switch (toolName) {
+        case 'web_pw_launch':
+          data = await this.desktopService.webPwLaunch(params['headless'] as boolean | undefined);
+          break;
+        case 'web_pw_navigate':
+          data = await this.desktopService.webPwNavigate(String(params['url']));
+          break;
+        case 'web_pw_get_interactive':
+          data = await this.desktopService.webPwGetInteractive();
+          break;
+        case 'web_pw_click_selector':
+          data = await this.desktopService.webPwClickSelector(String(params['selector']));
+          break;
+        case 'web_pw_click_role':
+          data = await this.desktopService.webPwClickRole(String(params['role']), params['name'] as string | undefined);
+          break;
+        case 'web_pw_fill':
+          data = await this.desktopService.webPwFill(String(params['selector']), String(params['text']));
+          break;
+        case 'web_pw_scroll':
+          data = await this.desktopService.webPwScroll(params['delta_y'] as number | undefined);
+          break;
+        case 'web_pw_close':
+          data = await this.desktopService.webPwClose();
+          break;
+        default:
+          return SkillFail(`Unknown Playwright tool: ${toolName}`);
+      }
+
+      return SkillOk(`${toolName} succeeded`, data ?? {});
+    } catch (e) {
+      const errMsg = e instanceof Error ? `${e.message}\n${e.stack}` : String(e);
+      console.error(`[web-skill] ${toolName} threw:`, errMsg);
+      return SkillFail(`Playwright tool ${toolName} failed: ${e}`);
+    }
   }
 
   // ══ Extension backend ══
@@ -85,13 +138,13 @@ export class WebScreenSkill implements Skill {
   }
 
   private async extScreenshot(): Promise<SkillResult> {
-    const r = await extensionBridge.captureScreen();
+    const r = await this.extensionBridge.captureScreen();
     if (r['success'] !== true) return SkillFail(r['error'] as string ?? 'Screenshot failed');
     return SkillOk('Screenshot captured', { screenshot: r['screenshot'] });
   }
 
   private async extGetUI(): Promise<SkillResult> {
-    const r = await extensionBridge.getDOM();
+    const r = await this.extensionBridge.getDOM();
     if (r['success'] !== true) return SkillFail(r['error'] as string ?? 'Failed');
     const nodes = (r['nodes'] as Array<Record<string, unknown>>) ?? [];
     const interactiveCount = nodes.filter((n) => n['clickable'] === true).length;
@@ -99,25 +152,25 @@ export class WebScreenSkill implements Skill {
   }
 
   private async extClick(p: Record<string, unknown>): Promise<SkillResult> {
-    const r = await extensionBridge.executeAction(null, { type: 'click', x: Number(p['x']), y: Number(p['y']) });
+    const r = await this.extensionBridge.executeAction(null, { type: 'click', x: Number(p['x']), y: Number(p['y']) });
     if (r['success'] !== true && r['ok'] !== true) return SkillFail(r['error'] as string ?? 'Click failed');
     return SkillOk(`Clicked at (${p['x']},${p['y']})`, { info: r['info'] });
   }
 
   private async extClickElement(p: Record<string, unknown>): Promise<SkillResult> {
-    const r = await extensionBridge.executeAction(null, { type: 'click_element', selector: p['selector'] as string });
+    const r = await this.extensionBridge.executeAction(null, { type: 'click_element', selector: p['selector'] as string });
     if (r['success'] !== true && r['ok'] !== true) return SkillFail(r['error'] as string ?? 'Click failed');
     return SkillOk(`Clicked ${p['selector']}`, { info: r['info'] });
   }
 
   private async extType(p: Record<string, unknown>): Promise<SkillResult> {
-    const r = await extensionBridge.executeAction(null, { type: 'type', text: p['text'] as string });
+    const r = await this.extensionBridge.executeAction(null, { type: 'type', text: p['text'] as string });
     if (r['success'] !== true && r['ok'] !== true) return SkillFail(r['error'] as string ?? 'Type failed');
     return SkillOk(`Typed "${p['text']}"`);
   }
 
   private async extFill(p: Record<string, unknown>): Promise<SkillResult> {
-    const r = await extensionBridge.executeAction(null, { type: 'fill', selector: p['selector'] as string, text: p['text'] as string });
+    const r = await this.extensionBridge.executeAction(null, { type: 'fill', selector: p['selector'] as string, text: p['text'] as string });
     if (r['success'] !== true && r['ok'] !== true) return SkillFail(r['error'] as string ?? 'Fill failed');
     return SkillOk(`Filled ${p['selector']}`);
   }
@@ -125,37 +178,37 @@ export class WebScreenSkill implements Skill {
   private async extScroll(p: Record<string, unknown>): Promise<SkillResult> {
     const dx = Number(p['dx']) || 0;
     const dy = Number(p['dy']) || 0;
-    const r = await extensionBridge.executeAction(null, { type: 'scroll', dx, dy });
+    const r = await this.extensionBridge.executeAction(null, { type: 'scroll', dx, dy });
     if (r['success'] !== true && r['ok'] !== true) return SkillFail(r['error'] as string ?? 'Scroll failed');
     return SkillOk(r['message'] as string ?? 'Scrolled');
   }
 
   private async extScrollIntoView(p: Record<string, unknown>): Promise<SkillResult> {
-    const r = await extensionBridge.executeAction(null, { type: 'scroll_into_view', selector: p['selector'] as string });
+    const r = await this.extensionBridge.executeAction(null, { type: 'scroll_into_view', selector: p['selector'] as string });
     if (r['success'] !== true && r['ok'] !== true) return SkillFail(r['error'] as string ?? 'Scroll failed');
     return SkillOk(`Scrolled to ${p['selector']}`);
   }
 
   private async extPressKey(p: Record<string, unknown>): Promise<SkillResult> {
-    const r = await extensionBridge.executeAction(null, { type: 'press_key', key: p['key'] as string });
+    const r = await this.extensionBridge.executeAction(null, { type: 'press_key', key: p['key'] as string });
     if (r['success'] !== true && r['ok'] !== true) return SkillFail(r['error'] as string ?? 'Key press failed');
     return SkillOk(`Pressed ${p['key']}`);
   }
 
   private async extNavigate(p: Record<string, unknown>): Promise<SkillResult> {
-    const r = await extensionBridge.openURL(p['url'] as string);
+    const r = await this.extensionBridge.openURL(p['url'] as string);
     if (r['success'] !== true) return SkillFail(r['error'] as string ?? 'Navigation failed');
     return SkillOk(`Navigated to ${p['url']}`, { tabId: r['tabId'] });
   }
 
   private async extExtract(p: Record<string, unknown>): Promise<SkillResult> {
-    const r = await extensionBridge.executeAction(null, { type: 'extract', selector: p['selector'] as string });
+    const r = await this.extensionBridge.executeAction(null, { type: 'extract', selector: p['selector'] as string });
     if (r['success'] !== true && r['ok'] !== true) return SkillFail(r['error'] as string ?? 'Extract failed');
     return SkillOk('Extracted text', { text: r['text'] });
   }
 
   private async extListTabs(): Promise<SkillResult> {
-    const r = await extensionBridge.listTabs();
+    const r = await this.extensionBridge.listTabs();
     if (r['success'] !== true) return SkillFail(r['error'] as string ?? 'Failed');
     const tabs = (r['tabs'] as Array<unknown>) ?? [];
     return SkillOk(`${tabs.length} tabs`, { tabs });
@@ -174,7 +227,7 @@ export class WebScreenSkill implements Skill {
   }
 
   private async iframeGetUI(): Promise<SkillResult> {
-    const r = await webScreenService.getUI();
+    const r = await this.webScreenService.getUI();
     if (!r) return SkillFail('Failed to get UI tree');
     const nodes = (r['nodes'] as Array<Record<string, unknown>>) ?? [];
     const count = this.countNodes(nodes);
@@ -182,7 +235,7 @@ export class WebScreenSkill implements Skill {
   }
 
   private async iframeClick(p: Record<string, unknown>): Promise<SkillResult> {
-    const r = await webScreenService.click(Number(p['x']), Number(p['y']));
+    const r = await this.webScreenService.click(Number(p['x']), Number(p['y']));
     if (r['ok'] !== true) return SkillFail(r['error'] as string ?? 'Click failed');
     const info = r['info'];
     const desc = info ? `Clicked ${(info as Record<string, unknown>)['tag']} at (${p['x']},${p['y']})` : `Clicked at (${p['x']},${p['y']})`;
@@ -190,13 +243,13 @@ export class WebScreenSkill implements Skill {
   }
 
   private async iframeType(p: Record<string, unknown>): Promise<SkillResult> {
-    const r = await webScreenService.typeText(p['text'] as string);
+    const r = await this.webScreenService.typeText(p['text'] as string);
     if (r['ok'] !== true) return SkillFail(r['error'] as string ?? 'Type failed');
     return SkillOk(r['message'] as string ?? `Typed "${p['text']}"`);
   }
 
   private async iframeScroll(p: Record<string, unknown>): Promise<SkillResult> {
-    const r = await webScreenService.scroll(Number(p['dx']) || 0, Number(p['dy']) || 0);
+    const r = await this.webScreenService.scroll(Number(p['dx']) || 0, Number(p['dy']) || 0);
     if (r['ok'] !== true) return SkillFail(r['error'] as string ?? 'Scroll failed');
     return SkillOk(r['message'] as string ?? 'Scrolled');
   }

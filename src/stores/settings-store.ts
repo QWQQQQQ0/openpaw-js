@@ -22,6 +22,7 @@ interface SettingsState extends AppSettings {
   disableTool: (toolName: string) => void;
   enableTool: (toolName: string) => void;
   toggleFavorite: (toolName: string) => void;
+  setFavoriteTools: (tools: Set<string>) => void;
   isFavorite: (toolName: string) => boolean;
   setLocale: (locale: string | null) => void;
 }
@@ -95,6 +96,11 @@ export const useSettingsStore = create<SettingsState>()(
         }
         writeSet('favorite_tools', s.favoriteTools);
       });
+    },
+
+    setFavoriteTools: (tools) => {
+      set({ favoriteTools: tools });
+      writeSet('favorite_tools', tools);
     },
 
     isFavorite: (toolName) => get().favoriteTools.has(toolName),

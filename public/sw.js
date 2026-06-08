@@ -1,6 +1,6 @@
 // OpenPaw Service Worker — caches static assets for offline use and PWA installability
 
-const CACHE_NAME = 'openpaw-v1';
+const CACHE_NAME = 'openpaw-v2';
 
 // Resources to pre-cache on install
 const PRE_CACHE_URLS = [

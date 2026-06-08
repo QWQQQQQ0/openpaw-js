@@ -24,7 +24,6 @@ export default function RootLayout({
 }: Readonly<{
   children: React.ReactNode;
 }>) {
-  console.log('layout');
   return (
     <html lang="zh" className="h-full antialiased">
       <head>
@@ -66,7 +65,6 @@ export default function RootLayout({
   /* If React hasn't mounted after REACT_TIMEOUT, reload to retry */
   setTimeout(function () {
     if (!window.__react_ready) {
-      console.warn('[boot] React not mounted after ' + REACT_TIMEOUT/1000 + 's, reloading...');
       location.reload();
     }
   }, REACT_TIMEOUT);
@@ -114,8 +112,8 @@ function PWARegister() {
 if (typeof navigator !== 'undefined' && 'serviceWorker' in navigator) {
   window.addEventListener('load', () => {
     navigator.serviceWorker.register('/sw.js').then(
-      (reg) => console.debug('SW registered:', reg.scope),
-      (err) => console.debug('SW registration failed:', err)
+      () => {},
+      () => {}
     );
   });
 }`,

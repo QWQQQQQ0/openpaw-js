@@ -3,11 +3,21 @@
 import type { SkillResult, ToolDefinition } from '@/types/skill';
 import type { Skill, SkillTool } from './skill';
 import { toolToOpenAI } from './skill';
+import type { ISkillExecutor } from '@/interfaces/skill-executor';
 
-export class SkillExecutor {
+export class SkillExecutor implements ISkillExecutor {
   private skills: Map<string, Skill> = new Map();
   private toolToSkill: Map<string, Skill> = new Map();
   disabledTools: Set<string> = new Set();
+
+  /** Legacy tool names → unified replacements (transparent to LLM, for backward compat) */
+  private static LEGACY_MAP: Record<string, string> = {
+    'desktop_double_click': 'desktop_click',
+    'desktop_right_click': 'desktop_click',
+    'desktop_middle_click': 'desktop_click',
+    'desktop_screenshot_window': 'desktop_screenshot',
+    'desktop_screenshot_region': 'desktop_screenshot',
+  };
 
   register(skill: Skill): void {
     this.skills.set(skill.id, skill);
@@ -61,18 +71,44 @@ export class SkillExecutor {
     toolName: string,
     params: Record<string, unknown>,
   ): Promise<SkillResult> {
+    // Legacy tool name → search with unified name, but execute with ORIGINAL
+    // name so the skill's internal alias can translate params (e.g. right_click → button:'right')
+    const mappedName = SkillExecutor.LEGACY_MAP[toolName] ?? toolName;
+    const legacyNote = mappedName !== toolName ? ` (→${mappedName})` : '';
+
     for (const skill of this.allSkills) {
-      if (skill.tools.some((t) => t.name === toolName)) {
-        return skill.execute(toolName, params);
+      if (skill.tools.some((t) => t.name === mappedName)) {
+        const argsStr = JSON.stringify(params);
+        const argsPreview = argsStr.length > 500
+          ? argsStr.substring(0, 500) + '...'
+          : argsStr;
+        console.log(`[executor] ▶ ${toolName}${legacyNote}(${argsPreview}) via ${skill.name}`);
+        const start = Date.now();
+        // Pass ORIGINAL toolName — skill's executeTool handles legacy param translation
+        const result = await skill.execute(toolName, params);
+        const duration = Date.now() - start;
+        if (result.success) {
+          const dataPreview = result.data
+            ? JSON.stringify(result.data).substring(0, 200)
+            : result.message?.substring(0, 200) ?? '';
+          console.log(`[executor] ◀ ${toolName} ✓ ${duration}ms — ${dataPreview}`);
+        } else {
+          console.warn(`[executor] ◀ ${toolName} ✗ ${duration}ms — ${result.message}`);
+        }
+        return result;
       }
     }
+    console.warn(`[executor] ◀ ${toolName} ✗ — no skill handles this tool`);
     return { success: false, message: `No enabled skill handles tool: ${toolName}` };
   }
 
-  buildToolsForLLM(only?: Set<string>): Record<string, unknown>[] {
+  buildToolsForLLM(only?: Set<string> | string[]): Record<string, unknown>[] {
     let tools = this.allTools.filter((t) => !this.disabledTools.has(t.name));
     if (only) {
-      tools = tools.filter((t) => only.has(t.name));
+      const has = only instanceof Set
+        ? (name: string) => only.has(name)
+        : (name: string) => only.includes(name);
+      tools = tools.filter((t) => has(t.name));
     }
     return tools.map(toolToOpenAI);
   }

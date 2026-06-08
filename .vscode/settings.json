@@ -1,0 +1,15 @@
+{
+  "terminal.integrated.defaultProfile.windows": "Command Prompt",
+  "terminal.integrated.profiles.windows": {
+    "Command Prompt": {
+      "args": ["/K", "chcp 65001 >nul"]
+    }
+  },
+  "terminal.integrated.env.windows": {
+    "PYTHONIOENCODING": "utf-8",
+    "PYTHONUTF8": "1",
+    "LANG": "zh_CN.UTF-8",
+    "LC_ALL": "zh_CN.UTF-8"
+  },
+  "files.encoding": "utf8"
+}

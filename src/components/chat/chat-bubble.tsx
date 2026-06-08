@@ -7,6 +7,25 @@ import { ChevronDown, ChevronUp, Loader2, AlertCircle } from 'lucide-react';
 import type { ChatMessage } from '@/types/message';
 import { MarkdownBody } from './markdown-body';
 import { StreamingText } from './streaming-text';
+import { extractBbox, BboxOverlay } from '@/components/bbox-overlay';
+
+function extractUserImage(message: ChatMessage): string | null {
+  const content = message.content;
+  if (!Array.isArray(content)) return null;
+  for (const part of content) {
+    if (
+      typeof part === 'object' &&
+      part !== null &&
+      'type' in part &&
+      part.type === 'image_url' &&
+      'image_url' in part &&
+      part.image_url
+    ) {
+      return (part.image_url as { url: string }).url;
+    }
+  }
+  return null;
+}
 
 function ImageFromUrl({ url }: { url: string }) {
   return (
@@ -114,18 +133,46 @@ function UserBubble({ message }: { message: ChatMessage }) {
   );
 }
 
-function AssistantBubble({ message }: { message: ChatMessage }) {
+function ThinkingBlock({ content }: { content: string }) {
+  const [expanded, setExpanded] = useState(false);
+
+  return (
+    <div className="mb-2 border-l-2 border-amber-300 dark:border-amber-600 pl-2">
+      <button
+        onClick={() => setExpanded(!expanded)}
+        className="flex items-center gap-1.5 text-[12px] text-amber-600 dark:text-amber-400 hover:text-amber-700 dark:hover:text-amber-300 transition-colors"
+      >
+        <span className="font-medium">💭 思考过程</span>
+        {expanded ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
+      </button>
+      {expanded && (
+        <div className="mt-1.5 text-[12px] leading-relaxed text-zinc-500 dark:text-zinc-400 whitespace-pre-wrap font-mono max-h-[400px] overflow-y-auto">
+          {content}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function AssistantBubble({ message, userImage }: { message: ChatMessage; userImage?: string | null }) {
   const content = message.content;
   const text = typeof content === 'string' ? content : '';
   const isStreaming = message.status === 'streaming';
+  const bbox = !isStreaming && userImage ? extractBbox(text) : null;
 
   return (
     <div className="flex justify-start px-3 py-1.5">
       <div className="max-w-[82%] bg-zinc-100 dark:bg-zinc-800 rounded-2xl rounded-bl-md px-3 py-2">
+        {message.reasoning_content && (
+          <ThinkingBlock content={message.reasoning_content} />
+        )}
         {isStreaming ? (
           <StreamingText text={text} isStreaming={isStreaming} />
         ) : (
           <MarkdownBody content={text} />
+        )}
+        {bbox && (
+          <BboxOverlay imageUrl={userImage!} bbox={bbox} />
         )}
         {message.status === 'streaming' && (
           <Loader2 size={12} className="mt-1 animate-spin text-blue-500" />
@@ -138,7 +185,7 @@ function AssistantBubble({ message }: { message: ChatMessage }) {
   );
 }
 
-export function ChatBubble({ message }: { message: ChatMessage }) {
+export function ChatBubble({ message, previousMessage }: { message: ChatMessage; previousMessage?: ChatMessage }) {
   if (message.role === 'tool' || (message.role as string) === 'tool_call') {
     return <ToolBubble message={message} />;
   }
@@ -147,5 +194,6 @@ export function ChatBubble({ message }: { message: ChatMessage }) {
     return <UserBubble message={message} />;
   }
 
-  return <AssistantBubble message={message} />;
+  const userImage = previousMessage ? extractUserImage(previousMessage) : null;
+  return <AssistantBubble message={message} userImage={userImage} />;
 }

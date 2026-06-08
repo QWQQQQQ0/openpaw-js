@@ -8,12 +8,13 @@ export class AnthropicAdapter implements LLMAdapter {
   readonly displayName = 'Anthropic';
   readonly defaultBaseUrl = 'https://api.anthropic.com';
 
-  async *chat({ messages, model, apiKey, baseUrl, tools }: {
+  async *chat({ messages, model, apiKey, baseUrl, tools, thinkingMode }: {
     messages: LLMMessage[];
     model: string;
     apiKey: string;
     baseUrl?: string;
     tools?: Record<string, unknown>[];
+    thinkingMode?: boolean;
   }): AsyncGenerator<string> {
     console.debug('[anthropic] POST msgs=', messages.length, 'tools=', tools?.length ?? 0, 'model=', model);
     const url = `${baseUrl ?? this.defaultBaseUrl}/v1/messages`;
@@ -37,6 +38,11 @@ export class AnthropicAdapter implements LLMAdapter {
     }
     if (tools && tools.length > 0) {
       body['tools'] = convertTools(tools);
+    }
+
+    // MiMo thinking models: enable thinking mode
+    if (thinkingMode) {
+      body['thinking'] = { type: 'enabled' };
     }
 
     const response = await fetch(url, {

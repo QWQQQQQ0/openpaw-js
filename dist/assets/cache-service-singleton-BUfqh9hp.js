@@ -1,0 +1,1 @@
+import{P as r}from"./index-3-libOPS.js";import"./vendor-markdown-DkZTs8jq.js";import"./vendor-react-CfjWFXXn.js";import"./vendor-state-D0g0rz4W.js";import"./vendor-tauri-DP7f-jEB.js";let e=null;function m(){return e||(e=r()),e}function p(t){e=t}export{m as getCacheService,p as setCacheService};

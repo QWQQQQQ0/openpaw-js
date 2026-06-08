@@ -1,11 +1,19 @@
 // 来源: lib/services/web_automation_agent.dart + desktop_automation_agent.dart
 
-import { ModelCallService, ModelScenario } from '@/adapters/model-call-service';
-import type { WebScreenSkill } from '@/skills/web';
+import { ModelScenario } from '@/services/llm-gateway/gateway';
+import { getModelService } from '@/services/model-service-singleton';
+import type { IModelService } from '@/interfaces/model-service';
+import type { ISkillExecutor } from '@/interfaces/skill-executor';
+import type { ICacheService } from '@/interfaces/cache-service';
 import type { SkillResult } from '@/types/skill';
 import type { ProviderConfig } from '@/types/provider';
 import type { LLMMessage } from '@/types/message';
+import type { SemanticAnnotation } from '@/types/cache';
 import { compressImage, type CompressedImage } from '@/utils/image';
+import { resolveMultimodalProvider } from '@/utils/multimodal-provider';
+import { useModelConfigStore } from '@/stores/model-config-store';
+import { computeWebFingerprint, hashDOMStructure } from '@/services/cache-service';
+import { domNodesToAnnotations } from '@/services/semantic-annotation-service';
 
 export interface ToolCallInfo {
   id: string;
@@ -43,13 +51,15 @@ class AgentContext {
 }
 
 export class WebAutomationAgent {
-  private modelService: ModelCallService;
-  private skill: WebScreenSkill;
+  private modelService: IModelService;
+  private skillExecutor: ISkillExecutor;
+  private cacheService?: ICacheService;
   testMode = false;
 
-  constructor(modelService: ModelCallService, skill: WebScreenSkill) {
+  constructor(modelService: IModelService, skillExecutor: ISkillExecutor, cacheService?: ICacheService) {
     this.modelService = modelService;
-    this.skill = skill;
+    this.skillExecutor = skillExecutor;
+    this.cacheService = cacheService;
   }
 
   async executeCommand(params: {
@@ -68,19 +78,50 @@ export class WebAutomationAgent {
       screenshotBase64,
       domNodes = [],
       goal,
-      provider,
-      apiKey,
       currentUrl,
       actionHistory = [],
       toolFilter,
       maxTurns = 5,
       onStep,
     } = params;
+    let { provider, apiKey } = params;
 
-    const allTools = this.skill.tools.map((t) => ({
-      type: 'function',
-      function: { name: t.name, description: t.description, parameters: t.parameters },
-    }));
+    // 多模态自动切换：Web 自动化需要截图分析，必须使用支持多模态的模型
+    if (provider.supportsMultimodal === false) {
+      const allProviders = useModelConfigStore.getState().providers;
+      const { provider: resolved, switched } = resolveMultimodalProvider(provider, allProviders, [
+        { type: 'image_url', image_url: { url: 'data:image/png;base64,placeholder' } },
+      ]);
+      if (switched) {
+        provider = resolved;
+        try {
+          apiKey = await useModelConfigStore.getState().getApiKey(provider.id, '');
+        } catch { /* 使用传入的 apiKey */ }
+      }
+    }
+
+    // L1 cache for web pages
+    let webAnnotations: SemanticAnnotation[] = [];
+    if (this.cacheService && domNodes.length > 0 && currentUrl) {
+      try {
+        const structHash = hashDOMStructure(domNodes);
+        const webFP = computeWebFingerprint(currentUrl, domNodes.length, structHash);
+        const cached = await this.cacheService.getUICache(webFP);
+        if (cached && cached.annotations.length > 0) {
+          webAnnotations = cached.annotations;
+        } else {
+          webAnnotations = domNodesToAnnotations(domNodes, 1920, 1080);
+          if (webAnnotations.length > 0) {
+            // 用网站域名作为 app_name，URL 路径作为 window_class
+            const appName = extractHostname(currentUrl);
+            const urlPath = extractPath(currentUrl);
+            await this.cacheService.storeUICache(webFP, webFP, null, appName, urlPath, [], webAnnotations);
+          }
+        }
+      } catch { /* non-fatal cache error */ }
+    }
+
+    const allTools = this.skillExecutor.buildToolsForLLM();
     const resolvedTools = toolFilter
       ? allTools.filter((t) => {
           const fn = t['function'] as { name: string };
@@ -99,11 +140,12 @@ export class WebAutomationAgent {
         compressedInitial = await compressImage(screenshotBase64);
       } catch { /* use original if compression fails */ }
     }
-    ctx.messages.push(this.buildUserMessage({ screenshotBase64, domNodes, currentUrl, actionHistory, compressedScreenshot: compressedInitial }));
+    ctx.messages.push(this.buildUserMessage({ screenshotBase64, domNodes, currentUrl, actionHistory, compressedScreenshot: compressedInitial, webAnnotations }));
 
     for (let turn = 0; turn < maxTurns; turn++) {
       let toolCalls: ToolCallInfo[];
       let responseText = '';
+      let reasoningBuffer = '';
 
       if (this.testMode) {
         toolCalls = this.mockToolCalls(goal, turn);
@@ -111,7 +153,6 @@ export class WebAutomationAgent {
         const preEdit = await onStep?.({ type: 'before_llm', data: { model: provider.model, messages: ctx.messages, tools }, turnIndex: turn });
         const callTools = preEdit?.['tools'] ? preEdit['tools'] as Record<string, unknown>[] : tools;
 
-        console.debug(`WebAutomation: turn=${turn} msgs=${ctx.messages.length} tools=${callTools.length}`);
 
         const stream = this.modelService.chatStream({
           scenario: ModelScenario.webAutomation,
@@ -130,6 +171,8 @@ export class WebAutomationAgent {
             toolJson = chunk.substring(10);
           } else if (chunk.startsWith('__ERROR__:')) {
             throw new Error(chunk.substring(10));
+          } else if (chunk.startsWith('__REASONING__:')) {
+            reasoningBuffer += chunk.substring(14);
           } else {
             textBuffer.push(chunk);
           }
@@ -170,6 +213,7 @@ export class WebAutomationAgent {
       ctx.messages.push({
         role: 'assistant',
         content: responseText || null,
+        reasoning_content: reasoningBuffer || undefined,
         toolCalls: toolCalls.map((tc) => ({
           id: tc.id,
           type: 'function',
@@ -181,7 +225,7 @@ export class WebAutomationAgent {
         const toolEdit = await onStep?.({ type: 'before_tool', data: { name: tc.name, arguments: tc.arguments }, turnIndex: turn });
         const resolvedArgs = (toolEdit?.['toolArguments'] as Record<string, unknown>) ?? tc.arguments;
 
-        const result = await this.skill.execute(tc.name, resolvedArgs);
+        const result = await this.skillExecutor.executeToolCall(tc.name, resolvedArgs);
         turnResults.push(result);
         ctx.allResults.push(result);
 
@@ -199,7 +243,7 @@ export class WebAutomationAgent {
                 role: 'user',
                 content: [
                   { type: 'image_url', image_url: { url: compressed.dataUrl } },
-                  { type: 'text', text: `Latest screenshot (original size: ${compressed.originalWidth}x${compressed.originalHeight}). Continue with the task.` },
+                  { type: 'text', text: `Latest screenshot. Continue with the task.` },
                 ],
               });
             } catch {
@@ -234,21 +278,24 @@ export class WebAutomationAgent {
     currentUrl?: string;
     actionHistory: string[];
     compressedScreenshot?: CompressedImage;
+    webAnnotations?: SemanticAnnotation[];
   }): LLMMessage {
-    const { screenshotBase64, domNodes = [], currentUrl, actionHistory, compressedScreenshot } = opts;
+    const { screenshotBase64, domNodes = [], currentUrl, actionHistory, compressedScreenshot, webAnnotations } = opts;
 
     const domSummary = this.buildDOMSummary(domNodes);
 
-    const sizePrefix = compressedScreenshot
-      ? `[屏幕原始尺寸: ${compressedScreenshot.originalWidth}x${compressedScreenshot.originalHeight}]\n\n`
+    const annotationSummary = webAnnotations && webAnnotations.length > 0
+      ? `\nSemantic element annotations:\n${webAnnotations.slice(0, 30).map(a =>
+          `- "${a.label}" [${a.role}] (${a.description}) keywords: [${a.keywords.join(', ')}]`
+        ).join('\n')}\n`
       : '';
 
-    const textContent = sizePrefix + [
+    const textContent = [
       `Current URL: ${currentUrl ?? 'unknown'}`,
       '',
       `Interactive DOM elements (${domNodes.length} total):`,
       domSummary,
-      '',
+      annotationSummary,
       `Recent actions:`,
       actionHistory.length > 0 ? actionHistory.join('\n') : '(none)',
       '',
@@ -319,5 +366,24 @@ export class WebAutomationAgent {
     return [
       { id: 'call_mock_done', name: 'web_done', arguments: { summary: `Task "${goal}" completed (mock)` } },
     ];
+  }
+}
+
+/** 从 URL 提取网站域名（如 "doubao.com"） */
+function extractHostname(url: string): string {
+  try {
+    return new URL(url).hostname;
+  } catch {
+    return 'unknown-site';
+  }
+}
+
+/** 从 URL 提取路径（如 "/chat"） */
+function extractPath(url: string): string {
+  try {
+    const parsed = new URL(url);
+    return parsed.pathname + (parsed.search || '');
+  } catch {
+    return '/';
   }
 }
